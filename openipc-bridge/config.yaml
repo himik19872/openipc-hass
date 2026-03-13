@@ -25,7 +25,7 @@ homeassistant_api: true
 map:
   - config:rw
 
-# 👇 ДОБАВЬ ЭТУ СЕКЦИЮ
+
 telegram:
-  bot_token: "8288837933:AAFUlSm5hFj_43rCX7JRKIazWNfof4AtE7Y"
-  chat_id: "-5051257354"
+  bot_token: "11111111"
+  chat_id: "1111111111"
