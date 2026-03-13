@@ -97,6 +97,16 @@ LNPR_CLEAR_LOG = "/cgi-bin/lnprevent_cgi?action=clear"
 LNPR_CURRENT = "/cgi-bin/lnprevent_cgi?action=current"
 LNPR_GET_PIC = "/cgi-bin/lnprevent_cgi?action=getpic"
 
+# OSD Constants
+OSD_DEFAULT_PORT = 9000
+OSD_REGIONS = [0, 1, 2, 3]
+OSD_DEFAULT_FONT = "UbuntuMono-Regular"
+OSD_DEFAULT_SIZE = 32.0
+OSD_DEFAULT_COLOR = "#ffffff"
+OSD_DEFAULT_OUTLINE = "#0"
+OSD_DEFAULT_THICKNESS = 0.0
+OSD_DEFAULT_OPACITY = 255
+
 # Сенсоры
 SENSOR_TYPES = {
     "uptime_seconds": {"name": "Uptime", "unit": "s", "icon": "mdi:timer"},
@@ -256,6 +266,10 @@ BEWARD_INTERCOM_LOCKED = "/cgi-bin/intercom_cgi?action=locked"
 BEWARD_SYSTEM_INFO = "/cgi-bin/systeminfo_cgi?action=get"
 BEWARD_PLAY_SOUND = "/cgi-bin/intercom_info_cgi?action=play_sound&Type=0"
 BEWARD_AUDIO_BEEP = "/cgi-bin/audio_cgi?action=beep"
+BEWARD_RELAY_1_ON = "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1"
+BEWARD_RELAY_1_OFF = "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0"
+BEWARD_RELAY_2_ON = "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=1"
+BEWARD_RELAY_2_OFF = "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=0"
 
 # Beward LNPR endpoints
 BEWARD_LNPR_STATE = "/cgi-bin/lnprstate_cgi"

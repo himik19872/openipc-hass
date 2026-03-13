@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenIPC Bridge - {% block title %}Главная{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        .navbar-brand {
+            font-weight: bold;
+            color: #0d6efd !important;
+        }
+        .nav-link {
+            font-size: 1.1rem;
+            margin: 0 5px;
+            border-radius: 5px;
+        }
+        .nav-link:hover {
+            background-color: rgba(13, 110, 253, 0.1);
+        }
+        .nav-link.active {
+            background-color: #0d6efd;
+            color: white !important;
+        }
+        .card {
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 2px solid #0d6efd;
+            font-weight: bold;
+        }
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.9rem;
+        }
+        .status-online {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-offline {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .footer {
+            margin-top: 50px;
+            padding: 20px 0;
+            background-color: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Навигация -->
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-camera-video"></i> OpenIPC Bridge
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link {% block nav_home %}{% endblock %}" href="/">
+                            <i class="bi bi-house-door"></i> Главная
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% block nav_cameras %}{% endblock %}" href="/config">
+                            <i class="bi bi-camera"></i> Камеры
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% block nav_osd %}{% endblock %}" href="/osd">
+                            <i class="bi bi-display"></i> OSD
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% block nav_qr %}{% endblock %}" href="/qr">
+                            <i class="bi bi-qr-code-scan"></i> QR-сканер
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% block nav_tts %}{% endblock %}" href="/tts">
+                            <i class="bi bi-mic"></i> TTS
+                        </a>
+                    </li>
+                </ul>
+                <div class="d-flex">
+                    <span class="badge bg-primary" id="systemTime"></span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Основной контент -->
+    <div class="container-fluid mt-4">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Футер -->
+    <div class="footer">
+        <div class="container text-center">
+            <p class="text-muted">
+                OpenIPC Bridge v1.1.1 | 
+                <a href="https://github.com/OpenIPC/hass" target="_blank">GitHub</a> |
+                <a href="#" onclick="checkUpdates()">Проверить обновления</a>
+            </p>
+            <p class="text-muted small" id="serverTime"></p>
+        </div>
+    </div>
+
+    <!-- Скрипты -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Обновление времени
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('systemTime').innerHTML = now.toLocaleTimeString();
+        }
+        setInterval(updateTime, 1000);
+        
+        // Проверка обновлений
+        function checkUpdates() {
+            fetch('/api/check_updates')
+                .then(r => r.json())
+                .then(data => {
+                    alert(data.message || 'Обновлений не найдено');
+                });
+        }
+        
+        // Загрузка серверного времени
+        fetch('/api/server_time')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('serverTime').innerHTML = 'Сервер: ' + data.time;
+            });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

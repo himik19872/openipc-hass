@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+{% block nav_cameras %}active{% endblock %}
+{% block title %}Настройка камер{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2><i class="bi bi-camera"></i> Настройка камер</h2>
+        <p class="text-muted">Управление подключенными камерами</p>
+    </div>
+</div>
+
+<!-- Импорт из Home Assistant -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <i class="bi bi-cloud-download"></i> Импорт из Home Assistant
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <p class="mb-3">
+                            <i class="bi bi-info-circle"></i>
+                            Автоматически импортировать камеры из интеграции <strong>OpenIPC</strong> в Home Assistant.
+                            Камеры будут добавлены с правильными настройками в зависимости от типа:
+                        </p>
+                        <ul class="mb-3">
+                            <li><span class="badge bg-primary">OpenIPC</span> - стандартные IP-камеры</li>
+                            <li><span class="badge bg-success">Beward</span> - домофоны с реле</li>
+                            <li><span class="badge bg-warning">Vivotek</span> - PTZ-камеры</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <button class="btn btn-primary btn-lg" onclick="importFromHA()" id="importBtn">
+                            <i class="bi bi-cloud-download"></i> Импортировать камеры
+                        </button>
+                        <div id="importStatus" class="mt-2"></div>
+                    </div>
+                </div>
+                
+                <!-- Результаты импорта -->
+                <div id="importResults" class="mt-3" style="display: none;">
+                    <div class="alert alert-info">
+                        <h6><i class="bi bi-list-check"></i> Результаты импорта:</h6>
+                        <div id="importDetails"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-list"></i> Список камер
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-light" onclick="loadCameras()">
+                        <i class="bi bi-arrow-repeat"></i> Обновить
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="camerasList" class="cameras-list">
+                    <!-- Загружается через JS -->
+                    <div class="text-center p-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                        <p class="mt-2">Загрузка списка камер...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <i class="bi bi-plus-circle"></i> Добавить камеру вручную
+            </div>
+            <div class="card-body">
+                <form id="cameraForm" onsubmit="addCamera(event)">
+                    <div class="mb-3">
+                        <label class="form-label">Название</label>
+                        <input type="text" class="form-control" id="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">IP адрес</label>
+                        <input type="text" class="form-control" id="ip" required pattern="\d+\.\d+\.\d+\.\d+">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тип</label>
+                        <select class="form-select" id="type">
+                            <option value="openipc">OpenIPC</option>
+                            <option value="beward">Beward (домофон)</option>
+                            <option value="vivotek">Vivotek (PTZ)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Логин</label>
+                        <input type="text" class="form-control" id="username" value="root">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Пароль</label>
+                        <input type="password" class="form-control" id="password" value="12345">
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="bi bi-plus-circle"></i> Добавить камеру
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header bg-info text-white">
+                <i class="bi bi-question-circle"></i> Подсказка
+            </div>
+            <div class="card-body">
+                <p><strong>Типы камер:</strong></p>
+                <p><span class="badge bg-primary">OpenIPC</span> - Обычные IP-камеры на прошивке OpenIPC</p>
+                <p><span class="badge bg-success">Beward</span> - Домофоны DS07P-LP с реле</p>
+                <p><span class="badge bg-warning">Vivotek</span> - PTZ-камеры с управлением</p>
+                
+                <hr>
+                <p><strong>Импорт из HA:</strong></p>
+                <p>Камеры, добавленные через интеграцию OpenIPC в Home Assistant, автоматически подтянутся с правильными настройками.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function loadCameras() {
+    fetch('/api/config')
+        .then(r => r.json())
+        .then(data => {
+            const list = document.getElementById('camerasList');
+            list.innerHTML = '';
+            
+            if (data.config.cameras && data.config.cameras.length > 0) {
+                data.config.cameras.forEach((cam, index) => {
+                    // Определяем иконку и цвет по типу
+                    let typeIcon = '';
+                    let typeClass = '';
+                    let typeBadge = '';
+                    
+                    switch(cam.type) {
+                        case 'openipc':
+                            typeIcon = 'bi-camera-video';
+                            typeClass = 'text-primary';
+                            typeBadge = '<span class="badge bg-primary">OpenIPC</span>';
+                            break;
+                        case 'beward':
+                            typeIcon = 'bi-door-open';
+                            typeClass = 'text-success';
+                            typeBadge = '<span class="badge bg-success">Beward</span>';
+                            break;
+                        case 'vivotek':
+                            typeIcon = 'bi-arrow-move';
+                            typeClass = 'text-warning';
+                            typeBadge = '<span class="badge bg-warning">Vivotek</span>';
+                            break;
+                        default:
+                            typeIcon = 'bi-question-circle';
+                            typeClass = 'text-secondary';
+                            typeBadge = '<span class="badge bg-secondary">Unknown</span>';
+                    }
+                    
+                    list.innerHTML += `
+                        <div class="card mb-2 camera-item" data-type="${cam.type}">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-1">
+                                            <i class="bi ${typeIcon} ${typeClass} me-2"></i>
+                                            ${cam.name}
+                                            ${typeBadge}
+                                            ${cam.osd && cam.osd.enabled ? 
+                                                '<span class="badge bg-info"><i class="bi bi-display"></i> OSD</span>' : ''}
+                                        </h6>
+                                        <small class="text-muted">
+                                            <i class="bi bi-hdd-network"></i> ${cam.ip} | 
+                                            <i class="bi bi-person"></i> ${cam.username}
+                                        </small>
+                                    </div>
+                                    <div>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="deleteCamera(${index})">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                list.innerHTML = `
+                    <div class="text-center p-5 text-muted">
+                        <i class="bi bi-camera" style="font-size: 3rem;"></i>
+                        <p class="mt-2">Нет добавленных камер</p>
+                        <p class="small">Добавьте камеру вручную или импортируйте из Home Assistant</p>
+                    </div>
+                `;
+            }
+        });
+}
+
+function addCamera(event) {
+    event.preventDefault();
+    
+    const name = document.getElementById('name').value;
+    const ip = document.getElementById('ip').value;
+    const type = document.getElementById('type').value;
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    
+    fetch('/api/config')
+        .then(r => r.json())
+        .then(data => {
+            // Создаем базовую конфигурацию камеры
+            const newCamera = {
+                name: name,
+                ip: ip,
+                type: type,
+                username: username,
+                password: password,
+                snapshot_endpoints: ["/image.jpg"],
+                tts_endpoint: "/play_audio",
+                tts_format: "pcm",
+                osd: {
+                    enabled: true,
+                    port: 9000,
+                    time_format: "%d.%m.%Y %H:%M:%S",
+                    regions: {
+                        "0": {"type": "image", "enabled": false, "image_path": "", "posx": 10, "posy": 10},
+                        "1": {"type": "text", "enabled": true, "text": "ДВЕРЬ ОТКРЫТА $t", "color": "#ff0000", "size": 48, "posx": 50, "posy": 50, "font": "UbuntuMono-Regular", "opacity": 255},
+                        "2": {"type": "text", "enabled": true, "text": "ЗАПИСЬ: 3 МИН", "color": "#ffff00", "size": 36, "posx": 50, "posy": 120, "font": "UbuntuMono-Regular", "opacity": 255},
+                        "3": {"type": "text", "enabled": false, "text": "", "color": "#ffffff", "size": 32, "posx": 10, "posy": 200, "font": "UbuntuMono-Regular", "opacity": 255}
+                    }
+                }
+            };
+            
+            // Добавляем специфичные для типа настройки
+            if (type === 'beward') {
+                newCamera.tts_format = 'alaw';
+                newCamera.tts_endpoint = '/cgi-bin/audio/transmit.cgi';
+                newCamera.snapshot_endpoints = ['/cgi-bin/jpg/image.cgi', '/cgi-bin/snapshot.cgi'];
+                newCamera.relay_endpoints = {
+                    "relay1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
+                    "relay1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
+                    "relay2_on": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=1",
+                    "relay2_off": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=0"
+                };
+            } else if (type === 'vivotek') {
+                newCamera.snapshot_endpoints = ['/cgi-bin/viewer/video.jpg', '/cgi-bin/video.jpg'];
+            }
+            
+            data.config.cameras.push(newCamera);
+            
+            return fetch('/api/config/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data.config)
+            });
+        })
+        .then(() => {
+            document.getElementById('cameraForm').reset();
+            document.getElementById('username').value = 'root';
+            document.getElementById('password').value = '12345';
+            loadCameras();
+            showNotification('success', 'Камера добавлена');
+        });
+}
+
+function deleteCamera(index) {
+    if (!confirm('Удалить эту камеру?')) return;
+    
+    fetch('/api/config')
+        .then(r => r.json())
+        .then(data => {
+            data.config.cameras.splice(index, 1);
+            return fetch('/api/config/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data.config)
+            });
+        })
+        .then(() => {
+            loadCameras();
+            showNotification('success', 'Камера удалена');
+        });
+}
+
+function importFromHA() {
+    const btn = document.getElementById('importBtn');
+    const status = document.getElementById('importStatus');
+    const results = document.getElementById('importResults');
+    const details = document.getElementById('importDetails');
+    
+    btn.disabled = true;
+    status.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Импорт...';
+    results.style.display = 'none';
+    
+    fetch('/api/ha/import_cameras', {
+        method: 'POST'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            let message = '';
+            let detailsHtml = '';
+            
+            if (data.imported && data.imported.length > 0) {
+                message += `<span class="text-success">✅ Добавлено: ${data.imported.length}</span> `;
+                detailsHtml += `<p><strong>Добавлены:</strong> ${data.imported.join(', ')}</p>`;
+            }
+            if (data.skipped && data.skipped.length > 0) {
+                message += `<span class="text-warning">🔄 Обновлено: ${data.skipped.length}</span> `;
+                detailsHtml += `<p><strong>Обновлены:</strong> ${data.skipped.join(', ')}</p>`;
+            }
+            message += `<br>Всего камер: ${data.total}`;
+            
+            status.innerHTML = `<span class="text-success">${message}</span>`;
+            if (detailsHtml) {
+                details.innerHTML = detailsHtml;
+                results.style.display = 'block';
+            }
+            loadCameras();
+        } else {
+            status.innerHTML = `<span class="text-danger">❌ Ошибка: ${data.error || 'Неизвестная ошибка'}</span>`;
+        }
+    })
+    .catch(error => {
+        status.innerHTML = `<span class="text-danger">❌ Ошибка: ${error.message}</span>`;
+    })
+    .finally(() => {
+        btn.disabled = false;
+        setTimeout(() => {
+            status.innerHTML = '';
+            results.style.display = 'none';
+        }, 5000);
+    });
+}
+
+function showNotification(type, message) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed top-0 end-0 m-3`;
+    alertDiv.style.zIndex = '9999';
+    alertDiv.style.minWidth = '300px';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(alertDiv);
+    setTimeout(() => alertDiv.remove(), 3000);
+}
+
+// Загружаем камеры при старте
+loadCameras();
+</script>
+{% endblock %}

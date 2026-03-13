@@ -2,6 +2,9 @@
 from homeassistant.core import ServiceCall, HomeAssistant
 import logging
 import aiohttp
+import os
+import time
+import asyncio
 from pathlib import Path
 from datetime import datetime
 
@@ -118,49 +121,130 @@ async def async_scan_devices(call: ServiceCall, hass: HomeAssistant) -> None:
 # ==================== Recording Services ====================
 
 async def async_start_recording(call: ServiceCall, hass: HomeAssistant) -> None:
-    """Handle start recording service."""
+    """Handle start recording service using HA's native recording."""
     entity_id = call.data.get(CONF_ENTITY_ID)
     duration = call.data.get("duration")
+    filename = call.data.get("filename")
     save_to_ha = call.data.get("save_to_ha", True)
-    method = call.data.get("method", "snapshots")
     
-    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
-    if coordinator:
-        if duration:
-            await coordinator.async_start_timed_recording(duration, save_to_ha, method)
+    if not entity_id:
+        _LOGGER.error("No entity_id provided")
+        return
+    
+    _LOGGER.info(f"🎥 Starting recording on {entity_id} via HA native recorder")
+    
+    if not filename and save_to_ha:
+        camera_name = entity_id.replace("camera.", "").replace(".", "_")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+        if coordinator and hasattr(coordinator, 'recorder'):
+            await coordinator.recorder.ensure_folder_exists()
+            folder = coordinator.recorder.record_folder
+            filename = f"{folder}/{camera_name}_{timestamp}.mp4"
         else:
-            if save_to_ha:
-                _LOGGER.error("Duration required for HA media recording")
-            else:
-                await coordinator.async_start_recording()
-        _LOGGER.debug("Start recording called on %s", entity_id)
-    else:
-        _LOGGER.error("Coordinator not found for entity %s", entity_id)
+            filename = f"/config/media/openipc_recordings/{camera_name}/{camera_name}_{timestamp}.mp4"
+    
+    service_data = {
+        "entity_id": entity_id,
+    }
+    
+    if filename:
+        service_data["filename"] = filename
+    
+    if duration:
+        service_data["duration"] = duration
+    
+    try:
+        await hass.services.async_call(
+            "camera",
+            "record",
+            service_data,
+            blocking=True
+        )
+        _LOGGER.info(f"✅ Recording started via HA native recorder: {filename}")
+        
+        if coordinator and hasattr(coordinator, 'recorder'):
+            coordinator.recorder._current_recording = {
+                "filename": filename.split('/')[-1] if filename else None,
+                "filepath": filename,
+                "duration": duration
+            }
+            if duration:
+                coordinator._recording_end_time = hass.loop.time() + duration
+                
+    except Exception as err:
+        _LOGGER.error(f"❌ Failed to start recording: {err}")
 
 async def async_stop_recording(call: ServiceCall, hass: HomeAssistant) -> None:
     """Handle stop recording service."""
     entity_id = call.data.get(CONF_ENTITY_ID)
     
-    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
-    if coordinator:
-        await coordinator.async_stop_recording()
-        _LOGGER.debug("Stop recording called on %s", entity_id)
-    else:
-        _LOGGER.error("Coordinator not found for entity %s", entity_id)
+    if not entity_id:
+        _LOGGER.error("No entity_id provided")
+        return
+    
+    _LOGGER.info(f"⏹️ Stopping recording on {entity_id}")
+    
+    try:
+        await hass.services.async_call(
+            "camera",
+            "stop_record",
+            {"entity_id": entity_id},
+            blocking=True
+        )
+        _LOGGER.info(f"✅ Recording stopped")
+        
+        coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+        if coordinator:
+            coordinator._recording_end_time = None
+            
+    except Exception as err:
+        _LOGGER.error(f"❌ Failed to stop recording: {err}")
 
 async def async_timed_recording(call: ServiceCall, hass: HomeAssistant) -> None:
     """Handle timed recording service."""
     entity_id = call.data.get(CONF_ENTITY_ID)
     duration = call.data["duration"]
-    save_to_ha = call.data.get("save_to_ha", True)
-    method = call.data.get("method", "snapshots")
+    filename = call.data.get("filename")
     
-    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
-    if coordinator:
-        await coordinator.async_start_timed_recording(duration, save_to_ha, method)
-        _LOGGER.debug("Timed recording called on %s for %d seconds", entity_id, duration)
-    else:
-        _LOGGER.error("Coordinator not found for entity %s", entity_id)
+    if not entity_id:
+        _LOGGER.error("No entity_id provided")
+        return
+    
+    _LOGGER.info(f"🎥 Starting timed recording on {entity_id} for {duration}s")
+    
+    if not filename:
+        camera_name = entity_id.replace("camera.", "").replace(".", "_")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+        if coordinator and hasattr(coordinator, 'recorder'):
+            await coordinator.recorder.ensure_folder_exists()
+            folder = coordinator.recorder.record_folder
+            filename = f"{folder}/{camera_name}_{timestamp}_{duration}s.mp4"
+        else:
+            filename = f"/config/media/openipc_recordings/{camera_name}/{camera_name}_{timestamp}_{duration}s.mp4"
+    
+    try:
+        await hass.services.async_call(
+            "camera",
+            "record",
+            {
+                "entity_id": entity_id,
+                "filename": filename,
+                "duration": duration
+            },
+            blocking=True
+        )
+        _LOGGER.info(f"✅ Timed recording started: {filename}")
+        
+        coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+        if coordinator:
+            coordinator._recording_end_time = hass.loop.time() + duration
+            
+    except Exception as err:
+        _LOGGER.error(f"❌ Failed to start timed recording: {err}")
 
 async def async_get_recordings(call: ServiceCall, hass: HomeAssistant) -> None:
     """Handle get recordings service."""
@@ -213,16 +297,68 @@ async def async_record_and_send_telegram(call: ServiceCall, hass: HomeAssistant)
     """Handle record and send to Telegram service."""
     entity_id = call.data.get(CONF_ENTITY_ID)
     duration = call.data["duration"]
-    method = call.data.get("method", "snapshots")
     caption = call.data.get("caption")
     chat_id = call.data.get("chat_id")
     
+    if not entity_id:
+        _LOGGER.error("No entity_id provided")
+        return
+    
+    _LOGGER.info(f"📹 Recording and sending to Telegram for {duration}s")
+    
+    camera_name = entity_id.replace("camera.", "").replace(".", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     coordinator = await find_coordinator_by_entity_id(hass, entity_id)
     if coordinator and hasattr(coordinator, 'recorder'):
-        await coordinator.async_record_and_send_telegram(duration, method, caption, chat_id)
-        _LOGGER.debug("Record and send Telegram called on %s", entity_id)
+        await coordinator.recorder.ensure_folder_exists()
+        folder = coordinator.recorder.record_folder
+        filename = f"{folder}/{camera_name}_{timestamp}_{duration}s.mp4"
     else:
-        _LOGGER.error("Coordinator or recorder not found for entity %s", entity_id)
+        filename = f"/config/media/openipc_recordings/{camera_name}/{camera_name}_{timestamp}_{duration}s.mp4"
+    
+    try:
+        await hass.services.async_call(
+            "camera",
+            "record",
+            {
+                "entity_id": entity_id,
+                "filename": filename,
+                "duration": duration
+            },
+            blocking=True
+        )
+        
+        await asyncio.sleep(duration + 2)
+        
+        filepath = Path(filename)
+        if filepath.exists():
+            if coordinator and hasattr(coordinator, 'recorder'):
+                success = await coordinator.recorder.send_to_telegram(filepath, caption, chat_id)
+                if success:
+                    _LOGGER.info(f"✅ Video recorded and sent to Telegram")
+                    
+                    await hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": f"📹 Видео отправлено",
+                            "message": f"✅ Видео успешно записано и отправлено в Telegram\n"
+                                      f"📁 {filepath.name}\n"
+                                      f"⏱ Длительность: {duration} сек",
+                            "notification_id": f"openipc_telegram_{coordinator.entry.entry_id}"
+                        },
+                        blocking=True
+                    )
+                else:
+                    _LOGGER.warning(f"⚠️ Video recorded but failed to send to Telegram")
+            else:
+                _LOGGER.error("Recorder not available")
+        else:
+            _LOGGER.error(f"❌ Video file not found: {filename}")
+            
+    except Exception as err:
+        _LOGGER.error(f"❌ Failed to record and send: {err}")
 
 # ==================== Diagnostic Services ====================
 
@@ -336,32 +472,18 @@ async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
     _LOGGER.debug("📹 RECORD WITH OSD CALLED")
     _LOGGER.debug("Call data: %s", call.data)
     
-    entity_id = None
-    
-    if hasattr(call, 'target') and call.target:
-        target_entity = call.target.get("entity_id")
-        if target_entity:
-            entity_id = target_entity
-            _LOGGER.debug("Got entity_id from target: %s", entity_id)
-    
-    if not entity_id:
-        data_entity = call.data.get(CONF_ENTITY_ID)
-        if data_entity is not None:
-            entity_id = data_entity
-            _LOGGER.debug("Got entity_id from data: %s", entity_id)
-    
-    if isinstance(entity_id, list):
-        if entity_id:
-            entity_id = entity_id[0]
-            _LOGGER.debug("Entity_id was list, using first: %s", entity_id)
-        else:
-            entity_id = None
+    entity_id = call.data.get(CONF_ENTITY_ID)
+    duration = call.data.get("duration")
+    template = call.data.get("template", DEFAULT_OSD_TEMPLATE)
+    position = call.data.get("position", DEFAULT_OSD_POSITION)
+    font_size = call.data.get("font_size", DEFAULT_OSD_FONT_SIZE)
+    color = call.data.get("color", DEFAULT_OSD_COLOR)
+    send_telegram = call.data.get("send_telegram", False)
     
     if not entity_id:
         _LOGGER.error("❌ No entity_id provided for record_with_osd service")
         return
     
-    duration = call.data.get("duration")
     if not duration:
         _LOGGER.error("No duration provided for record_with_osd service")
         return
@@ -371,12 +493,6 @@ async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
     except (ValueError, TypeError):
         _LOGGER.error("Invalid duration value: %s", duration)
         return
-        
-    template = call.data.get("template", DEFAULT_OSD_TEMPLATE)
-    position = call.data.get("position", DEFAULT_OSD_POSITION)
-    font_size = call.data.get("font_size", DEFAULT_OSD_FONT_SIZE)
-    color = call.data.get("color", DEFAULT_OSD_COLOR)
-    send_telegram = call.data.get("send_telegram", False)
     
     coordinator = await find_coordinator_by_entity_id(hass, entity_id)
     
@@ -399,22 +515,46 @@ async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
         "bg_color": "black@0.5",
     }
     
-    result = await coordinator.recorder.record_video(
-        duration, 
-        snapshot_interval=5,
-        add_osd=True,
-        osd_config=osd_config
-    )
+    camera_name = entity_id.replace("camera.", "").replace(".", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{coordinator.recorder.record_folder}/{camera_name}_{timestamp}_{duration}s.mp4"
     
-    if result.get("success") and send_telegram:
-        filepath = Path(result["filepath"])
-        caption = f"📹 Запись с OSD\n⏱ {duration} секунд"
-        await coordinator.recorder.send_to_telegram(filepath, caption)
-        _LOGGER.info("Video with OSD sent to Telegram: %s", result["filename"])
-    elif result.get("success"):
+    try:
+        if coordinator.osd_manager and coordinator.osd_manager.available:
+            _LOGGER.info(f"🎯 OSD would be set on camera: {template}")
+        
+        await hass.services.async_call(
+            "camera",
+            "record",
+            {
+                "entity_id": entity_id,
+                "filename": filename,
+                "duration": duration
+            },
+            blocking=True
+        )
+        
+        await asyncio.sleep(duration + 2)
+        
+        result = {
+            "success": True,
+            "filepath": filename,
+            "filename": Path(filename).name,
+            "duration": duration,
+            "camera": coordinator.recorder.camera_name,
+        }
+        
+        if send_telegram:
+            filepath = Path(filename)
+            if filepath.exists():
+                await coordinator.recorder.send_to_telegram(filepath, f"📹 Запись с OSD\n⏱ {duration} секунд")
+                _LOGGER.info("Video with OSD sent to Telegram")
+        
         _LOGGER.info("Video with OSD recorded: %s", result["filename"])
-    else:
-        _LOGGER.error("Failed to record video with OSD: %s", result.get("error"))
+        
+    except Exception as err:
+        _LOGGER.error("Failed to record video with OSD: %s", err)
+        result = {"success": False, "error": str(err)}
     
     _LOGGER.debug("=" * 60)
 
@@ -1033,7 +1173,6 @@ async def async_start_qr_scan(call: ServiceCall, hass: HomeAssistant) -> None:
     _LOGGER.error(f"🔥 use_addon: {coordinator.use_addon}")
     _LOGGER.error(f"🔥 addon available: {coordinator.addon.available if coordinator.addon else False}")
     
-    # Пробуем переобнаружить аддон если он не доступен
     if not coordinator.use_addon or not coordinator.addon.available:
         _LOGGER.warning(f"⚠️ Addon not available, trying to rediscover...")
         if coordinator.addon:
@@ -1051,13 +1190,10 @@ async def async_start_qr_scan(call: ServiceCall, hass: HomeAssistant) -> None:
     
     camera_ip = coordinator.host
     
-    # Используем метод addon для запуска сканирования
     result = await coordinator.addon.async_start_scan(camera_ip, expected_code, timeout)
     
     if result and result.get('success'):
         _LOGGER.info(f"✅ Scan started with ID: {result.get('scan_id')}")
-        
-        notification_id = f"qr_scan_start_{int(datetime.now().timestamp())}"
         
         await hass.services.async_call(
             "persistent_notification",
@@ -1068,116 +1204,202 @@ async def async_start_qr_scan(call: ServiceCall, hass: HomeAssistant) -> None:
                           f"Ожидаемый код: {expected_code}\n"
                           f"Таймаут: {timeout} сек\n"
                           f"ID: {result.get('scan_id')}",
-                "notification_id": notification_id
+                "notification_id": f"qr_scan_start_{int(time.time())}"
             },
             blocking=True
         )
     else:
         _LOGGER.error(f"❌ Failed to start scan")
-        notification_id = f"qr_scan_error_{int(datetime.now().timestamp())}"
-        
         await hass.services.async_call(
             "persistent_notification",
             "create",
             {
                 "title": "❌ Ошибка QR сканирования",
                 "message": f"Ошибка запуска сканирования для камеры {entity_id}",
-                "notification_id": notification_id
+                "notification_id": f"qr_scan_error_{int(time.time())}"
             },
             blocking=True
         )
 
-# ==================== OSD Recording Service ====================
+# ==================== OSD Services ====================
 
-async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
-    """Handle record with OSD service."""
-    from .const import DEFAULT_OSD_TEMPLATE, DEFAULT_OSD_POSITION, DEFAULT_OSD_FONT_SIZE, DEFAULT_OSD_COLOR
-    from .helpers import find_coordinator_by_entity_id
-    from pathlib import Path
-    from homeassistant.const import CONF_ENTITY_ID
+async def async_osd_set_text(call: ServiceCall, hass: HomeAssistant) -> None:
+    """Set OSD text service."""
+    _LOGGER.error(f"🔥🔥🔥 OSD_SET_TEXT CALLED in services_impl")
+    _LOGGER.error(f"🔥 Full call.data: {call.data}")
     
-    _LOGGER.debug("=" * 60)
-    _LOGGER.debug("📹 RECORD WITH OSD CALLED")
-    _LOGGER.debug("Call data: %s", call.data)
+    entity_id = call.data.get(CONF_ENTITY_ID)
+    region = call.data.get("region", 0)
+    text = call.data.get("text", "")
+    font = call.data.get("font", "UbuntuMono-Regular")
+    size = call.data.get("size", 32.0)
+    color = call.data.get("color", "#ffffff")
+    outline = call.data.get("outline", "#0")
+    thickness = call.data.get("thickness", 0.0)
+    opacity = call.data.get("opacity", 255)
+    posx = call.data.get("posx")
+    posy = call.data.get("posy")
+    save = call.data.get("save", True)
     
-    entity_id = None
-    
-    if hasattr(call, 'target') and call.target:
-        target_entity = call.target.get("entity_id")
-        if target_entity:
-            entity_id = target_entity
-            _LOGGER.debug("Got entity_id from target: %s", entity_id)
-    
-    if not entity_id:
-        data_entity = call.data.get(CONF_ENTITY_ID)
-        if data_entity is not None:
-            entity_id = data_entity
-            _LOGGER.debug("Got entity_id from data: %s", entity_id)
-    
-    if isinstance(entity_id, list):
-        if entity_id:
-            entity_id = entity_id[0]
-            _LOGGER.debug("Entity_id was list, using first: %s", entity_id)
-        else:
-            entity_id = None
+    _LOGGER.error(f"🔥 Extracted entity_id: {entity_id}")
+    _LOGGER.error(f"🔥 Extracted region: {region}")
+    _LOGGER.error(f"🔥 Extracted text: {text}")
+    _LOGGER.error(f"🔥 Extracted color: {color}")
+    _LOGGER.error(f"🔥 Extracted size: {size}")
     
     if not entity_id:
-        _LOGGER.error("❌ No entity_id provided for record_with_osd service")
+        _LOGGER.error(f"❌ No entity_id provided in call.data: {call.data}")
         return
-    
-    duration = call.data.get("duration")
-    if not duration:
-        _LOGGER.error("No duration provided for record_with_osd service")
-        return
-    
-    try:
-        duration = int(duration)
-    except (ValueError, TypeError):
-        _LOGGER.error("Invalid duration value: %s", duration)
-        return
-        
-    template = call.data.get("template", DEFAULT_OSD_TEMPLATE)
-    position = call.data.get("position", DEFAULT_OSD_POSITION)
-    font_size = call.data.get("font_size", DEFAULT_OSD_FONT_SIZE)
-    color = call.data.get("color", DEFAULT_OSD_COLOR)
-    send_telegram = call.data.get("send_telegram", False)
     
     coordinator = await find_coordinator_by_entity_id(hass, entity_id)
     
     if not coordinator:
-        _LOGGER.error("❌ No camera found with entity_id: %s", entity_id)
-        return
-        
-    if not hasattr(coordinator, 'recorder'):
-        _LOGGER.error("❌ Coordinator has no recorder for %s", entity_id)
+        _LOGGER.error(f"❌ Coordinator not found for {entity_id}")
         return
     
-    _LOGGER.info("✅ Using camera - Name: %s, Host: %s", 
-                coordinator.recorder.camera_name, coordinator.host)
+    _LOGGER.error(f"🔥 coordinator found: {coordinator is not None}")
+    _LOGGER.error(f"🔥 has osd_manager: {hasattr(coordinator, 'osd_manager')}")
     
-    osd_config = {
-        "template": template,
-        "position": position,
-        "font_size": font_size,
-        "color": color,
-        "bg_color": "black@0.5",
-    }
+    if not hasattr(coordinator, 'osd_manager') or not coordinator.osd_manager:
+        _LOGGER.error(f"❌ OSD manager not available for {entity_id}")
+        return
     
-    result = await coordinator.recorder.record_video(
-        duration, 
-        snapshot_interval=5,
-        add_osd=True,
-        osd_config=osd_config
+    _LOGGER.error(f"🔥 osd_manager available: {coordinator.osd_manager.available}")
+    
+    if not coordinator.osd_manager.available:
+        _LOGGER.error(f"❌ OSD API not available for {entity_id}")
+        return
+    
+    success = await coordinator.osd_manager.async_set_region_text(
+        region=region,
+        text=text,
+        font=font,
+        size=size,
+        color=color,
+        outline=outline,
+        thickness=thickness,
+        opacity=opacity,
+        posx=posx,
+        posy=posy,
+        save=save
     )
     
-    if result.get("success") and send_telegram:
-        filepath = Path(result["filepath"])
-        caption = f"📹 Запись с OSD\n⏱ {duration} секунд"
-        await coordinator.recorder.send_to_telegram(filepath, caption)
-        _LOGGER.info("Video with OSD sent to Telegram: %s", result["filename"])
-    elif result.get("success"):
-        _LOGGER.info("Video with OSD recorded: %s", result["filename"])
+    if success:
+        _LOGGER.info(f"✅ OSD text set on {entity_id} region {region}")
     else:
-        _LOGGER.error("Failed to record video with OSD: %s", result.get("error"))
+        _LOGGER.error(f"❌ Failed to set OSD text on {entity_id}")
+
+async def async_osd_clear(call: ServiceCall, hass: HomeAssistant) -> None:
+    """Clear OSD region service."""
+    entity_id = call.data.get(CONF_ENTITY_ID)
+    region = call.data.get("region", 0)
+    save = call.data.get("save", True)
     
-    _LOGGER.debug("=" * 60)
+    _LOGGER.error(f"🔥🔥🔥 OSD_CLEAR CALLED for {entity_id} region {region}")
+    
+    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+    if not coordinator or not hasattr(coordinator, 'osd_manager') or not coordinator.osd_manager:
+        _LOGGER.error(f"❌ OSD manager not available for {entity_id}")
+        return
+    
+    if not coordinator.osd_manager.available:
+        _LOGGER.error(f"❌ OSD API not available for {entity_id}")
+        return
+    
+    success = await coordinator.osd_manager.async_clear_region(region, save)
+    
+    if success:
+        _LOGGER.info(f"✅ OSD region {region} cleared on {entity_id}")
+    else:
+        _LOGGER.error(f"❌ Failed to clear OSD region on {entity_id}")
+
+async def async_osd_set_time_format(call: ServiceCall, hass: HomeAssistant) -> None:
+    """Set OSD time format service."""
+    entity_id = call.data.get(CONF_ENTITY_ID)
+    format_str = call.data.get("format", "%d.%m.%Y %H:%M:%S")
+    
+    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+    if not coordinator or not hasattr(coordinator, 'osd_manager') or not coordinator.osd_manager:
+        _LOGGER.error(f"OSD manager not available for {entity_id}")
+        return
+    
+    if not coordinator.osd_manager.available:
+        _LOGGER.error(f"OSD API not available for {entity_id}")
+        return
+    
+    success = await coordinator.osd_manager.async_set_time_format(format_str)
+    
+    if success:
+        _LOGGER.info(f"✅ OSD time format set on {entity_id}")
+    else:
+        _LOGGER.error(f"❌ Failed to set OSD time format on {entity_id}")
+
+async def async_osd_upload_image(call: ServiceCall, hass: HomeAssistant) -> None:
+    """Upload image to OSD region service."""
+    entity_id = call.data.get(CONF_ENTITY_ID)
+    region = call.data.get("region", 0)
+    image_path = call.data.get("image_path")
+    opacity = call.data.get("opacity", 255)
+    posx = call.data.get("posx")
+    posy = call.data.get("posy")
+    
+    if not image_path or not os.path.exists(image_path):
+        _LOGGER.error(f"Image file not found: {image_path}")
+        return
+    
+    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+    if not coordinator or not hasattr(coordinator, 'osd_manager') or not coordinator.osd_manager:
+        _LOGGER.error(f"OSD manager not available for {entity_id}")
+        return
+    
+    if not coordinator.osd_manager.available:
+        _LOGGER.error(f"OSD API not available for {entity_id}")
+        return
+    
+    success = await coordinator.osd_manager.async_set_region_image(
+        region=region,
+        image_path=image_path,
+        opacity=opacity,
+        posx=posx,
+        posy=posy
+    )
+    
+    if success:
+        _LOGGER.info(f"✅ Image uploaded to OSD region {region} on {entity_id}")
+    else:
+        _LOGGER.error(f"❌ Failed to upload image to OSD on {entity_id}")
+
+async def async_osd_get_config(call: ServiceCall, hass: HomeAssistant) -> None:
+    """Get OSD configuration service."""
+    entity_id = call.data.get(CONF_ENTITY_ID)
+    
+    coordinator = await find_coordinator_by_entity_id(hass, entity_id)
+    if not coordinator or not hasattr(coordinator, 'osd_manager') or not coordinator.osd_manager:
+        _LOGGER.error(f"OSD manager not available for {entity_id}")
+        return
+    
+    if not coordinator.osd_manager.available:
+        _LOGGER.error(f"OSD API not available for {entity_id}")
+        return
+    
+    configs = await coordinator.osd_manager.async_update_all_configs()
+    
+    message = f"📺 **OSD Configuration for {entity_id}**\n\n"
+    for region, config in configs.items():
+        message += f"**Region {region}:**\n"
+        message += f"  • Text: {config.get('text', 'none') or 'none'}\n"
+        message += f"  • Image: {config.get('img', 'none')}\n"
+        message += f"  • Position: {config.get('pos', [0,0])}\n"
+        message += f"  • Font: {config.get('font', 'default')} ({config.get('size', 0)}px)\n"
+        message += f"  • Color: {config.get('color', '#ffffff')}\n\n"
+    
+    await hass.services.async_call(
+        "persistent_notification",
+        "create",
+        {
+            "title": f"OSD Configuration",
+            "message": message,
+            "notification_id": f"openipc_osd_config_{int(time.time())}"
+        },
+        blocking=True
+    )

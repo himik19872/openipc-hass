@@ -30,6 +30,7 @@ from .const import (
 )
 from .recorder import OpenIPCRecorder
 from .addon import OpenIPCAddonManager
+from .osd_manager import OpenIPCOSDManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
         self.qr_scanner = None
         self.addon = None
         self.use_addon = False
+        self.osd_manager = None
         
         # Определяем тип камеры
         self.is_beward = (entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_BEWARD)
@@ -112,6 +114,21 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 _LOGGER.error(f"❌ Failed to create Vivotek device: {err}")
         
+        # OSD Manager для OpenIPC камер
+        if not self.is_beward and not self.is_vivotek:
+            try:
+                self.osd_manager = OpenIPCOSDManager(
+                    hass,
+                    self.host,
+                    self.username,
+                    self.password,
+                    port=9000  # Порт из конфига камеры
+                )
+                hass.async_create_task(self._async_check_osd())
+                _LOGGER.debug(f"OSD manager created for {camera_name}")
+            except Exception as err:
+                _LOGGER.error(f"❌ Failed to create OSD manager: {err}")
+        
         # Явно создаем и проверяем аддон
         self.addon = OpenIPCAddonManager(hass)
         
@@ -140,6 +157,15 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.info(f"✅ Vivotek device connected at {self.host}")
             except Exception as err:
                 _LOGGER.error(f"❌ Failed to connect Vivotek device: {err}")
+
+    async def _async_check_osd(self):
+        """Check if OSD server is available."""
+        if self.osd_manager:
+            available = await self.osd_manager.async_check_availability()
+            if available:
+                _LOGGER.info(f"✅ OSD server available at {self.host}:9000")
+            else:
+                _LOGGER.debug(f"OSD server not available at {self.host}")
 
     async def _async_discover_addon(self):
         """Discover addon asynchronously."""
@@ -198,6 +224,10 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
                 }
                 
                 if self.beward:
+                    # Обновляем состояние Beward
+                    beward_state = await self.beward.async_update()
+                    data["beward_state"] = beward_state
+                    
                     lnpr_data = await self._async_update_lnpr()
                     data["lnpr"] = lnpr_data
                 
@@ -233,7 +263,19 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
     def _parse_camera_data(self, config, metrics, status):
         """Parse data from JSON config, Prometheus metrics and HTML status."""
         from .parsers import parse_camera_data
-        return parse_camera_data(config, metrics, status)
+        parsed = parse_camera_data(config, metrics, status)
+        
+        # Сохраняем модель для API
+        if 'model' not in parsed and status and isinstance(status, dict) and 'raw' in status:
+            # Парсим модель из HTML если есть
+            try:
+                model_match = re.search(r'Model[^>]*>([^<]+)', status['raw'], re.IGNORECASE)
+                if model_match:
+                    parsed['model'] = model_match.group(1).strip()
+            except:
+                pass
+        
+        return parsed
 
     async def _async_update_lnpr(self):
         """Fetch LNPR data from camera."""
@@ -315,3 +357,17 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
         """Test Telegram file send."""
         from .diagnostics import test_telegram
         return await test_telegram(self, chat_id)
+
+    @property
+    def model(self) -> str:
+        """Return camera model."""
+        if self.data and 'parsed' in self.data:
+            return self.data['parsed'].get('model', 'Unknown')
+        return 'Unknown'
+    
+    @property
+    def firmware(self) -> str:
+        """Return firmware version."""
+        if self.data and 'parsed' in self.data:
+            return self.data['parsed'].get('firmware', 'Unknown')
+        return 'Unknown'

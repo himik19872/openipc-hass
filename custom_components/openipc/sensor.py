@@ -57,6 +57,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
         _LOGGER.error("Failed to create QR sensor for %s: %s", 
                      entry.data.get('name'), err)
     
+    # OSD сенсор для OpenIPC камер
+    if device_type != DEVICE_TYPE_BEWARD and device_type != DEVICE_TYPE_VIVOTEK:
+        try:
+            osd_sensor = OpenIPCOsdSensor(coordinator, entry)
+            entities.append(osd_sensor)
+            _LOGGER.debug("✅ OSD sensor added for %s", entry.data.get('name'))
+        except Exception as err:
+            _LOGGER.error("Failed to create OSD sensor for %s: %s", 
+                         entry.data.get('name'), err)
+    
     # Специфичные сенсоры для Beward
     if device_type == DEVICE_TYPE_BEWARD and coordinator.beward:
         _LOGGER.info(f"🔧 Setting up Beward sensors for {entry.data.get('name')}")
@@ -399,7 +409,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        # Безопасная проверка наличия qr_scanner
         if not self._qr_scanner_available:
             return "none"
         
@@ -410,7 +419,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
             return "none"
         
         try:
-            # Проверяем наличие атрибута last_result у qr_scanner
             if not hasattr(self.coordinator.qr_scanner, 'last_result'):
                 return "none"
             
@@ -438,7 +446,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
             "scanner_available": self._qr_scanner_available
         }
         
-        # Безопасная проверка наличия qr_scanner
         if not self._qr_scanner_available:
             return attrs
         
@@ -448,7 +455,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
         try:
             scanner = self.coordinator.qr_scanner
             
-            # Проверяем каждое свойство перед доступом
             if hasattr(scanner, 'is_active'):
                 attrs["active"] = scanner.is_active
             
@@ -467,7 +473,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
             if hasattr(scanner, '_last_time'):
                 attrs["last_scan_time"] = scanner._last_time
             
-            # Добавляем информацию о триггерах
             if hasattr(scanner, '_triggers') and scanner._triggers:
                 trigger_list = []
                 for t in scanner._triggers:
@@ -481,7 +486,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
                         pass
                 attrs["triggers"] = trigger_list
             
-            # Добавляем последний результат
             if hasattr(scanner, 'last_result') and scanner.last_result:
                 result = scanner.last_result
                 if isinstance(result, dict):
@@ -523,8 +527,56 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # Сенсор доступен даже если QR сканер недоступен (просто показывает "none")
         return True
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        parsed = self.coordinator.data.get("parsed", {}) if self.coordinator.data else {}
+        return {
+            "identifiers": {(DOMAIN, self.entry.entry_id)},
+            "name": self.entry.data.get("name", "OpenIPC Camera"),
+            "manufacturer": "OpenIPC",
+            "model": parsed.get("model", "Camera"),
+            "sw_version": parsed.get("firmware", "Unknown"),
+        }
+
+
+# ==================== OSD Sensor ====================
+
+class OpenIPCOsdSensor(CoordinatorEntity, SensorEntity):
+    """OSD status sensor for OpenIPC cameras."""
+
+    def __init__(self, coordinator, entry):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.coordinator = coordinator
+        self.entry = entry
+        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} OSD Status"
+        self._attr_unique_id = f"{entry.entry_id}_osd_status"
+        self._attr_icon = "mdi:subtitles"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_native_value = "unknown"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not hasattr(self.coordinator, 'osd_manager'):
+            return "unsupported"
+        if self.coordinator.osd_manager and self.coordinator.osd_manager.available:
+            return "available"
+        return "unavailable"
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes."""
+        attrs = {}
+        if hasattr(self.coordinator, 'osd_manager') and self.coordinator.osd_manager:
+            if self.coordinator.osd_manager.available:
+                summary = self.coordinator.osd_manager.get_region_summary()
+                for region, data in summary.items():
+                    attrs[f"region_{region}"] = data
+        return attrs
 
     @property
     def device_info(self):

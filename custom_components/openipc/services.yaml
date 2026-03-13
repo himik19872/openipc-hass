@@ -126,7 +126,6 @@ openipc_notify:
       required: false
       selector:
         object:
-          # language и volume будут в data
 
 # ==================== Recording Services ====================
 
@@ -422,3 +421,221 @@ ptz_set_preset:
       example: "Entrance gate"
       selector:
         text:
+
+# ==================== OSD Services ====================
+
+osd_set_text:
+  name: Set OSD Text
+  description: Set text overlay on camera using native OSD API
+  target:
+    entity:
+      integration: openipc
+      domain: camera
+  fields:
+    region:
+      name: Region
+      description: OSD region number (0-3)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 3
+          step: 1
+    text:
+      name: Text
+      description: |
+        Text to display. Supports specifiers:
+        - $B - Bitrate (e.g., $B:eth0 for specific interface)
+        - $C - CPU usage
+        - $M - Memory usage
+        - $t - Time (format set via osd_set_time_format)
+      required: true
+      example: "$t  CPU:$C%  MEM:$M  $B"
+      selector:
+        text:
+          multiline: false
+    font:
+      name: Font
+      description: Font name
+      required: false
+      default: "UbuntuMono-Regular"
+      selector:
+        text:
+    size:
+      name: Font Size
+      description: Font size in pixels
+      required: false
+      default: 32.0
+      selector:
+        number:
+          min: 8
+          max: 72
+          step: 1.0
+          unit_of_measurement: "px"
+    color:
+      name: Text Color
+      description: Text color in hex format (e.g., "#ffffff" = white)
+      required: false
+      default: "#ffffff"
+      selector:
+        color_rgb:
+    outline:
+      name: Outline Color
+      description: Outline color in hex format
+      required: false
+      default: "#0"
+      selector:
+        color_rgb:
+    thickness:
+      name: Outline Thickness
+      description: Outline thickness
+      required: false
+      default: 0.0
+      selector:
+        number:
+          min: 0.0
+          max: 5.0
+          step: 0.1
+    opacity:
+      name: Opacity
+      description: Opacity (0-255, 255 = fully opaque)
+      required: false
+      default: 255
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+    posx:
+      name: X Position
+      description: X position on screen (pixels from left)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 1
+    posy:
+      name: Y Position
+      description: Y position on screen (pixels from top)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 1
+    save:
+      name: Save to config
+      description: Save settings to persistent config (survives reboot)
+      required: false
+      default: true
+      selector:
+        boolean:
+
+osd_clear:
+  name: Clear OSD Region
+  description: Clear text from OSD region
+  target:
+    entity:
+      integration: openipc
+      domain: camera
+  fields:
+    region:
+      name: Region
+      description: OSD region number (0-3)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 3
+          step: 1
+    save:
+      name: Save to config
+      description: Save settings to persistent config
+      required: false
+      default: true
+      selector:
+        boolean:
+
+osd_set_time_format:
+  name: Set OSD Time Format
+  description: Set time format for $t specifier (strftime syntax)
+  target:
+    entity:
+      integration: openipc
+      domain: camera
+  fields:
+    format:
+      name: Time Format
+      description: |
+        strftime format string.
+        Common codes: %Y (year), %m (month), %d (day), %H (hour), %M (minute), %S (second)
+      required: true
+      default: "%d.%m.%Y %H:%M:%S"
+      example: "%Y-%m-%d %H:%M:%S"
+      selector:
+        text:
+
+osd_upload_image:
+  name: Upload Image to OSD
+  description: Upload PNG or BMP image to OSD region
+  target:
+    entity:
+      integration: openipc
+      domain: camera
+  fields:
+    region:
+      name: Region
+      description: OSD region number (0-3)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 3
+          step: 1
+    image_path:
+      name: Image Path
+      description: Full path to PNG or BMP file in Home Assistant
+      required: true
+      example: "/config/www/logo.png"
+      selector:
+        text:
+    opacity:
+      name: Opacity
+      description: Opacity (0-255)
+      required: false
+      default: 255
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+    posx:
+      name: X Position
+      description: X position on screen
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 1
+    posy:
+      name: Y Position
+      description: Y position on screen
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 1
+
+osd_get_config:
+  name: Get OSD Configuration
+  description: Get current OSD configuration for all regions
+  target:
+    entity:
+      integration: openipc
+      domain: camera

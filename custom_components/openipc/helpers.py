@@ -23,7 +23,7 @@ async def find_coordinator_by_entity_id(hass: HomeAssistant, entity_id: str):
     if not isinstance(entity_id, str):
         return None
     
-    # Сначала пытаемся найти по точному совпадению для камеры
+    # Ищем по всем записям в DOMAIN
     for entry_id, coordinator in hass.data[DOMAIN].items():
         if entry_id == "config":
             continue
@@ -44,8 +44,13 @@ async def find_coordinator_by_entity_id(hass: HomeAssistant, entity_id: str):
         if entity_id in exact_ids:
             _LOGGER.debug("✅ Found coordinator by exact match: %s", entry_id)
             return coordinator
+        
+        # Проверяем по частичному совпадению имени
+        if camera_name in entity_id or camera_host in entity_id:
+            _LOGGER.debug("✅ Found coordinator by partial match: %s", entry_id)
+            return coordinator
     
-    # Если не нашли по точному совпадению, ищем через device registry
+    # Если не нашли, пробуем через device registry
     try:
         from homeassistant.helpers import device_registry as dr, entity_registry as er
         
@@ -68,20 +73,6 @@ async def find_coordinator_by_entity_id(hass: HomeAssistant, entity_id: str):
                         return coordinator
     except Exception as err:
         _LOGGER.debug("Error in device registry lookup: %s", err)
-    
-    # Если все еще не нашли, пробуем по частичному совпадению имени
-    entity_lower = entity_id.lower()
-    for entry_id, coordinator in hass.data[DOMAIN].items():
-        if entry_id == "config":
-            continue
-        
-        if hasattr(coordinator, 'recorder'):
-            camera_name = coordinator.recorder.camera_name.lower()
-            camera_host = coordinator.host
-            
-            if camera_name in entity_lower or camera_host in entity_lower:
-                _LOGGER.debug("✅ Found coordinator by partial match: %s", entry_id)
-                return coordinator
     
     _LOGGER.error("❌ Coordinator not found for %s", entity_id)
     return None

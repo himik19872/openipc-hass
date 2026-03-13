@@ -1,0 +1,939 @@
+{% extends "base.html" %}
+{% block nav_osd %}active{% endblock %}
+{% block title %}Настройка OSD{% endblock %}
+
+{% block extra_css %}
+<style>
+    .preview-container {
+        position: relative;
+        display: inline-block;
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    
+    #previewImage {
+        max-width: 100%;
+        max-height: 500px;
+        border: 2px solid #ddd;
+        border-radius: 5px;
+        background: #000;
+    }
+    
+    #osdOverlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+    }
+    
+    .osd-region {
+        position: absolute;
+        border: 2px dashed #ff0000;
+        background-color: rgba(255, 0, 0, 0.1);
+        cursor: move;
+        pointer-events: auto;
+        user-select: none;
+        min-width: 50px;
+        min-height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        text-shadow: 1px 1px 2px black;
+        font-weight: bold;
+        font-family: monospace;
+        transition: all 0.2s;
+    }
+    
+    .osd-region:hover {
+        background-color: rgba(255, 0, 0, 0.3);
+        border: 2px solid #ff0000;
+        z-index: 100;
+    }
+    
+    .osd-region.selected {
+        border: 3px solid #00ff00;
+        background-color: rgba(0, 255, 0, 0.2);
+        z-index: 101;
+    }
+    
+    .osd-region.dragging {
+        opacity: 0.9;
+        z-index: 1000;
+        box-shadow: 0 0 20px rgba(0,255,0,0.5);
+    }
+    
+    .coordinates {
+        position: absolute;
+        bottom: 2px;
+        right: 2px;
+        background: rgba(0,0,0,0.8);
+        color: #fff;
+        padding: 2px 4px;
+        font-size: 10px;
+        border-radius: 3px;
+        font-family: monospace;
+    }
+    
+    .region-card {
+        margin-bottom: 15px;
+        border-left: 4px solid #0d6efd;
+        transition: all 0.3s;
+    }
+    
+    .region-card:hover {
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    .region-card.region-0 { border-left-color: #6f42c1; }
+    .region-card.region-1 { border-left-color: #dc3545; }
+    .region-card.region-2 { border-left-color: #ffc107; }
+    .region-card.region-3 { border-left-color: #0dcaf0; }
+    .region-card.region-0 .card-header { background-color: #6f42c1; color: white; }
+    .region-card.region-1 .card-header { background-color: #dc3545; color: white; }
+    .region-card.region-2 .card-header { background-color: #ffc107; color: black; }
+    .region-card.region-3 .card-header { background-color: #0dcaf0; color: black; }
+    
+    .region-card .card-header {
+        padding: 8px 15px;
+        font-weight: bold;
+    }
+    
+    .preview-status {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 12px;
+        z-index: 10;
+    }
+    
+    .template-badge {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(0,123,255,0.9);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 12px;
+        z-index: 10;
+    }
+    
+    .color-preview {
+        width: 30px;
+        height: 30px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+        display: inline-block;
+        vertical-align: middle;
+    }
+    
+    .variable-hint {
+        background: #e9ecef;
+        padding: 5px;
+        border-radius: 5px;
+        font-size: 12px;
+        margin-top: 5px;
+    }
+    
+    .variable-hint code {
+        background: #fff;
+        padding: 2px 4px;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+    
+    .variable-hint code:hover {
+        background: #007bff;
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2><i class="bi bi-display"></i> Настройка OSD</h2>
+        <p class="text-muted">Управление отображением текста и логотипов на камерах</p>
+    </div>
+</div>
+
+<!-- Выбор камеры и шаблоны -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <i class="bi bi-camera"></i> Выбор камеры
+            </div>
+            <div class="card-body">
+                <select class="form-select" id="cameraSelect" onchange="loadCameraConfig()">
+                    <option value="">Выберите камеру...</option>
+                </select>
+                <div class="form-text mt-2" id="cameraHelp"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <i class="bi bi-save"></i> Шаблоны OSD
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-7">
+                        <select class="form-select" id="templateSelect">
+                            <option value="">Выберите шаблон...</option>
+                        </select>
+                    </div>
+                    <div class="col-md-5">
+                        <button class="btn btn-success btn-sm" onclick="saveTemplate()">
+                            <i class="bi bi-save"></i> Сохранить
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="applyTemplate()">
+                            <i class="bi bi-upload"></i> Применить
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteTemplate()">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Предпросмотр OSD -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-eye"></i> Предпросмотр OSD
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-light" onclick="updatePreview()">
+                        <i class="bi bi-arrow-repeat"></i> Обновить
+                    </button>
+                    <button class="btn btn-sm btn-light" onclick="toggleAutoRefresh()" id="autoRefreshBtn">
+                        <i class="bi bi-play-circle"></i> Авто
+                    </button>
+                    <button class="btn btn-sm btn-light" onclick="applyAllToCamera()">
+                        <i class="bi bi-cloud-upload"></i> Применить к камере
+                    </button>
+                </div>
+            </div>
+            <div class="card-body text-center">
+                <div class="preview-container">
+                    <img id="previewImage" src="" alt="Предпросмотр">
+                    <div id="osdOverlay"></div>
+                    <div class="preview-status" id="previewStatus">
+                        <i class="bi bi-hourglass"></i> Ожидание...
+                    </div>
+                    <div class="template-badge" id="activeTemplate"></div>
+                </div>
+                
+                <div class="row mt-3">
+                    <div class="col">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle"></i>
+                            Перетаскивайте регионы мышкой для изменения позиции
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Настройки регионов -->
+<div class="row" id="regionsContainer">
+    <!-- Регионы будут загружены динамически -->
+</div>
+
+<!-- Подсказка по переменным -->
+<div class="row mt-3">
+    <div class="col-md-12">
+        <div class="variable-hint">
+            <strong><i class="bi bi-info-circle"></i> Доступные переменные:</strong>
+            <code onclick="insertVariable('$t')">$t</code> - время, 
+            <code onclick="insertVariable('$B')">$B</code> - битрейт, 
+            <code onclick="insertVariable('$C')">$C</code> - кадры, 
+            <code onclick="insertVariable('$M')">$M</code> - память
+        </div>
+    </div>
+</div>
+
+<script>
+    // Глобальные переменные
+    let currentCamera = null;
+    let previewTimer = null;
+    let autoRefresh = false;
+    let selectedRegion = null;
+    let dragOffset = { x: 0, y: 0 };
+    let previewImageSize = { width: 0, height: 0 };
+    
+    // Загрузка списка камер - ИСПРАВЛЕННАЯ ВЕРСИЯ
+    fetch('/api/cameras/status')
+        .then(r => r.json())
+        .then(data => {
+            const select = document.getElementById('cameraSelect');
+            const helpDiv = document.getElementById('cameraHelp');
+            select.innerHTML = '<option value="">Выберите камеру...</option>';
+            
+            console.log('Cameras loaded:', data);
+            
+            if (data.cameras && data.cameras.length > 0) {
+                data.cameras.forEach(cam => {
+                    const osdIcon = cam.osd_enabled ? '✅' : '⚠️';
+                    const osdText = cam.osd_enabled ? 'OSD готов' : 'OSD не настроен';
+                    select.innerHTML += `<option value="${cam.ip}" data-osd="${cam.osd_enabled}">
+                        ${cam.name} (${cam.ip}) ${osdIcon} - ${osdText}
+                    </option>`;
+                });
+                
+                // Добавляем подсказку
+                const enabledCount = data.cameras.filter(c => c.osd_enabled).length;
+                helpDiv.innerHTML = `✅ ${enabledCount} камер с OSD | ⚠️ ${data.cameras.length - enabledCount} без OSD`;
+            } else {
+                select.innerHTML += '<option value="">Нет камер в конфиге</option>';
+                helpDiv.innerHTML = '❌ Добавьте камеры в настройках';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading cameras:', error);
+            document.getElementById('cameraSelect').innerHTML = '<option value="">Ошибка загрузки</option>';
+        });
+    
+    // Загрузка конфигурации камеры
+    function loadCameraConfig() {
+        const select = document.getElementById('cameraSelect');
+        currentCamera = select.value;
+        
+        if (!currentCamera) {
+            document.getElementById('regionsContainer').innerHTML = '';
+            return;
+        }
+        
+        // Показываем загрузку
+        document.getElementById('regionsContainer').innerHTML = `
+            <div class="col-md-12 text-center p-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Загрузка...</span>
+                </div>
+                <p>Загрузка настроек камеры...</p>
+            </div>
+        `;
+        
+        fetch(`/api/osd/camera/${currentCamera}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderRegions(data.config);
+                    updatePreview();
+                    
+                    // Проверяем включен ли OSD
+                    const selectedOption = select.options[select.selectedIndex];
+                    const osdEnabled = selectedOption.dataset.osd === 'true';
+                    
+                    if (!osdEnabled) {
+                        showNotification('warning', 'OSD отключен в конфиге камеры');
+                    }
+                } else {
+                    showNotification('danger', 'Ошибка загрузки конфигурации');
+                }
+            })
+            .catch(error => {
+                console.error('Error loading camera config:', error);
+                showNotification('danger', 'Ошибка соединения с камерой');
+            });
+    }
+    
+    // Отрисовка регионов
+    function renderRegions(config) {
+        const container = document.getElementById('regionsContainer');
+        container.innerHTML = '';
+        
+        // Регион 0 - логотип
+        container.appendChild(createRegionCard(0, 'Логотип', config.regions?.['0'] || {}));
+        
+        // Регионы 1-3 - текст
+        for(let i = 1; i <= 3; i++) {
+            container.appendChild(createRegionCard(i, `Текст ${i}`, config.regions?.[i] || {}));
+        }
+    }
+    
+    // Создание карточки региона
+    function createRegionCard(region, title, regionConfig) {
+        const col = document.createElement('div');
+        col.className = 'col-md-6';
+        
+        const card = document.createElement('div');
+        card.className = `card region-card region-${region}`;
+        
+        let content = `
+            <div class="card-header">
+                <i class="bi bi-${region === 0 ? 'image' : 'font'}"></i>
+                Регион ${region} - ${title}
+            </div>
+            <div class="card-body">
+        `;
+        
+        if (region === 0) {
+            // Для логотипа
+            content += `
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="region${region}_enabled" 
+                           ${regionConfig.enabled ? 'checked' : ''}>
+                    <label class="form-check-label">Включен</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Путь к BMP</label>
+                    <input type="text" class="form-control" id="region${region}_path" 
+                           value="${regionConfig.image_path || ''}" placeholder="/config/www/logo.bmp">
+                </div>
+                <div class="row">
+                    <div class="col">
+                        <label class="form-label">X позиция</label>
+                        <input type="number" class="form-control" id="region${region}_posx" 
+                               value="${regionConfig.posx || 10}" min="0" max="100">
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Y позиция</label>
+                        <input type="number" class="form-control" id="region${region}_posy" 
+                               value="${regionConfig.posy || 10}" min="0" max="100">
+                    </div>
+                </div>
+            `;
+        } else {
+            // Для текста
+            const defaultText = region === 1 ? 'ДВЕРЬ ОТКРЫТА $t' : 
+                               (region === 2 ? 'ЗАПИСЬ: 3 МИН' : '');
+            
+            content += `
+                <div class="mb-3">
+                    <label class="form-label">Текст</label>
+                    <input type="text" class="form-control" id="region${region}_text" 
+                           value="${regionConfig.text || defaultText}">
+                </div>
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label">Цвет</label>
+                        <div class="d-flex align-items-center">
+                            <input type="color" class="form-control form-control-color me-2" 
+                                   id="region${region}_color" value="${regionConfig.color || '#ffffff'}">
+                            <span class="color-preview" style="background: ${regionConfig.color || '#ffffff'}"></span>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Размер</label>
+                        <input type="number" class="form-control" id="region${region}_size" 
+                               value="${regionConfig.size || 32}" min="8" max="72">
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col">
+                        <label class="form-label">X позиция</label>
+                        <input type="number" class="form-control" id="region${region}_posx" 
+                               value="${regionConfig.posx || 10}" min="0" max="100">
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Y позиция</label>
+                        <input type="number" class="form-control" id="region${region}_posy" 
+                               value="${regionConfig.posy || 10}" min="0" max="100">
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-md-6">
+                        <label class="form-label">Шрифт</label>
+                        <select class="form-select" id="region${region}_font">
+                            <option value="UbuntuMono-Regular" ${regionConfig.font === 'UbuntuMono-Regular' ? 'selected' : ''}>Ubuntu Mono</option>
+                            <option value="arial" ${regionConfig.font === 'arial' ? 'selected' : ''}>Arial</option>
+                            <option value="times" ${regionConfig.font === 'times' ? 'selected' : ''}>Times</option>
+                            <option value="comic" ${regionConfig.font === 'comic' ? 'selected' : ''}>Comic Sans</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Прозрачность</label>
+                        <input type="range" class="form-range" id="region${region}_opacity" 
+                               min="0" max="255" value="${regionConfig.opacity || 255}">
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Кнопки управления регионом
+        content += `
+                <div class="row mt-3">
+                    <div class="col text-center">
+                        <button class="btn btn-sm btn-info" onclick="highlightRegion(${region})">
+                            <i class="bi bi-eye"></i> Показать
+                        </button>
+                        <button class="btn btn-sm btn-primary" onclick="testRegion(${region})">
+                            <i class="bi bi-send"></i> Тест
+                        </button>
+                        <button class="btn btn-sm btn-success" onclick="applyRegion(${region})">
+                            <i class="bi bi-cloud-upload"></i> Применить
+                        </button>
+                        <button class="btn btn-sm btn-secondary" onclick="clearRegion(${region})">
+                            <i class="bi bi-eraser"></i> Очистить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        card.innerHTML = content;
+        col.appendChild(card);
+        
+        // Добавляем обработчики для полей ввода
+        setTimeout(() => {
+            if (region !== 0) {
+                const textField = document.getElementById(`region${region}_text`);
+                if (textField) textField.addEventListener('input', () => updatePreview());
+                
+                const colorField = document.getElementById(`region${region}_color`);
+                if (colorField) colorField.addEventListener('input', () => updatePreview());
+                
+                const sizeField = document.getElementById(`region${region}_size`);
+                if (sizeField) sizeField.addEventListener('input', () => updatePreview());
+                
+                const posxField = document.getElementById(`region${region}_posx`);
+                if (posxField) posxField.addEventListener('input', () => updatePreview());
+                
+                const posyField = document.getElementById(`region${region}_posy`);
+                if (posyField) posyField.addEventListener('input', () => updatePreview());
+                
+                const opacityField = document.getElementById(`region${region}_opacity`);
+                if (opacityField) opacityField.addEventListener('input', () => updatePreview());
+                
+                const fontField = document.getElementById(`region${region}_font`);
+                if (fontField) fontField.addEventListener('change', () => updatePreview());
+            } else {
+                const posxField = document.getElementById(`region0_posx`);
+                if (posxField) posxField.addEventListener('input', () => updatePreview());
+                
+                const posyField = document.getElementById(`region0_posy`);
+                if (posyField) posyField.addEventListener('input', () => updatePreview());
+            }
+        }, 100);
+        
+        return col;
+    }
+    
+    // Обновление предпросмотра
+    function updatePreview() {
+        if (!currentCamera) return;
+        
+        const img = document.getElementById('previewImage');
+        img.src = `/api/camera/${currentCamera}/snapshot?_=${Date.now()}`;
+        
+        img.onload = function() {
+            previewImageSize = {
+                width: img.width,
+                height: img.height
+            };
+            updateOsdOverlay();
+            document.getElementById('previewStatus').innerHTML = 
+                `<i class="bi bi-check-circle"></i> ${new Date().toLocaleTimeString()}`;
+        };
+        
+        img.onerror = function() {
+            document.getElementById('previewStatus').innerHTML = 
+                `<i class="bi bi-exclamation-triangle"></i> Ошибка загрузки`;
+        };
+    }
+    
+    // Обновление OSD оверлея
+    function updateOsdOverlay() {
+        const overlay = document.getElementById('osdOverlay');
+        overlay.innerHTML = '';
+        
+        for (let region = 0; region <= 3; region++) {
+            const regionData = getRegionData(region);
+            if (regionData && (regionData.text || region === 0)) {
+                addRegionToOverlay(region, regionData);
+            }
+        }
+    }
+    
+    // Получение данных региона
+    function getRegionData(region) {
+        if (region === 0) {
+            return {
+                enabled: document.getElementById(`region0_enabled`)?.checked || false,
+                text: "LOGO",
+                color: "#ffffff",
+                size: 32,
+                posx: parseInt(document.getElementById(`region0_posx`)?.value || 10),
+                posy: parseInt(document.getElementById(`region0_posy`)?.value || 10)
+            };
+        } else {
+            const textEl = document.getElementById(`region${region}_text`);
+            if (!textEl || !textEl.value) return null;
+            
+            return {
+                text: textEl.value,
+                color: document.getElementById(`region${region}_color`)?.value || "#ffffff",
+                size: parseInt(document.getElementById(`region${region}_size`)?.value || 32),
+                posx: parseInt(document.getElementById(`region${region}_posx`)?.value || 10),
+                posy: parseInt(document.getElementById(`region${region}_posy`)?.value || 10),
+                font: document.getElementById(`region${region}_font`)?.value || "UbuntuMono-Regular",
+                opacity: parseInt(document.getElementById(`region${region}_opacity`)?.value || 255)
+            };
+        }
+    }
+    
+    // Добавление региона на оверлей
+    function addRegionToOverlay(region, data) {
+        const overlay = document.getElementById('osdOverlay');
+        
+        const div = document.createElement('div');
+        div.className = 'osd-region';
+        if (selectedRegion === region) {
+            div.classList.add('selected');
+        }
+        
+        div.setAttribute('data-region', region);
+        div.style.left = (data.posx / 100 * previewImageSize.width) + 'px';
+        div.style.top = (data.posy / 100 * previewImageSize.height) + 'px';
+        div.style.color = data.color;
+        div.style.fontSize = data.size + 'px';
+        div.style.fontFamily = data.font || 'UbuntuMono-Regular';
+        div.style.opacity = (data.opacity || 255) / 255;
+        div.innerHTML = `
+            <span>${data.text || `Регион ${region}`}</span>
+            <span class="coordinates">${data.posx},${data.posy}</span>
+        `;
+        
+        div.addEventListener('mousedown', startDrag);
+        div.addEventListener('dblclick', () => highlightRegion(region));
+        
+        overlay.appendChild(div);
+    }
+    
+    // Подсветка региона
+    function highlightRegion(region) {
+        selectedRegion = region;
+        document.querySelectorAll('.osd-region').forEach(r => r.classList.remove('selected'));
+        
+        const regionDiv = document.querySelector(`.osd-region[data-region="${region}"]`);
+        if (regionDiv) {
+            regionDiv.classList.add('selected');
+            regionDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        
+        // Подсвечиваем карточку региона
+        document.querySelectorAll('.region-card').forEach(c => c.style.opacity = '0.7');
+        const cards = document.querySelectorAll('.region-card');
+        for (let card of cards) {
+            if (card.innerHTML.includes(`Регион ${region}`)) {
+                card.style.opacity = '1';
+                card.style.boxShadow = '0 0 20px #007bff';
+                setTimeout(() => card.style.boxShadow = '', 1000);
+            }
+        }
+    }
+    
+    // Перетаскивание
+    function startDrag(e) {
+        const region = e.target.closest('.osd-region');
+        if (!region) return;
+        
+        selectedRegion = parseInt(region.getAttribute('data-region'));
+        highlightRegion(selectedRegion);
+        
+        const rect = region.getBoundingClientRect();
+        const overlayRect = document.getElementById('osdOverlay').getBoundingClientRect();
+        
+        dragOffset = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+        
+        region.classList.add('dragging');
+        
+        document.addEventListener('mousemove', onDrag);
+        document.addEventListener('mouseup', stopDrag);
+        
+        e.preventDefault();
+    }
+    
+    function onDrag(e) {
+        const region = document.querySelector('.osd-region.dragging');
+        if (!region) return;
+        
+        const overlay = document.getElementById('osdOverlay');
+        const overlayRect = overlay.getBoundingClientRect();
+        
+        let newX = e.clientX - overlayRect.left - dragOffset.x;
+        let newY = e.clientY - overlayRect.top - dragOffset.y;
+        
+        // Ограничиваем внутри оверлея
+        newX = Math.max(0, Math.min(newX, overlayRect.width - region.offsetWidth));
+        newY = Math.max(0, Math.min(newY, overlayRect.height - region.offsetHeight));
+        
+        region.style.left = newX + 'px';
+        region.style.top = newY + 'px';
+        
+        // Обновляем координаты в процентах
+        const percentX = Math.round((newX / overlayRect.width) * 100);
+        const percentY = Math.round((newY / overlayRect.height) * 100);
+        
+        const regionNum = region.getAttribute('data-region');
+        const posXField = document.getElementById(`region${regionNum}_posx`);
+        const posYField = document.getElementById(`region${regionNum}_posy`);
+        
+        if (posXField && posYField) {
+            posXField.value = percentX;
+            posYField.value = percentY;
+        }
+        
+        // Обновляем отображение координат
+        const coordSpan = region.querySelector('.coordinates');
+        if (coordSpan) {
+            coordSpan.innerHTML = `${percentX},${percentY}`;
+        }
+    }
+    
+    function stopDrag() {
+        const region = document.querySelector('.osd-region.dragging');
+        if (region) {
+            region.classList.remove('dragging');
+        }
+        document.removeEventListener('mousemove', onDrag);
+        document.removeEventListener('mouseup', stopDrag);
+    }
+    
+    // Тестирование региона
+    function testRegion(region) {
+        if (!currentCamera) return;
+        
+        const data = getRegionData(region);
+        if (!data) return;
+        
+        fetch(`/api/osd/camera/${currentCamera}/region/${region}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('success', `Регион ${region} протестирован`);
+            } else {
+                showNotification('danger', `Ошибка: ${data.error || 'Неизвестная ошибка'}`);
+            }
+        })
+        .catch(error => {
+            showNotification('danger', 'Ошибка соединения');
+        });
+    }
+    
+    // Применение региона
+    function applyRegion(region) {
+        testRegion(region);
+    }
+    
+    // Применить все к камере
+    function applyAllToCamera() {
+        if (!currentCamera) return;
+        
+        let promises = [];
+        for (let region = 1; region <= 3; region++) {
+            const data = getRegionData(region);
+            if (data && data.text) {
+                promises.push(
+                    fetch(`/api/osd/camera/${currentCamera}/region/${region}`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(data)
+                    })
+                );
+            }
+        }
+        
+        Promise.all(promises).then(() => {
+            showNotification('success', 'Все регионы применены');
+        });
+    }
+    
+    // Очистка региона
+    function clearRegion(region) {
+        if (!currentCamera) return;
+        
+        fetch(`/api/osd/camera/${currentCamera}/region/${region}/clear`, {
+            method: 'POST'
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                if (region !== 0) {
+                    const textField = document.getElementById(`region${region}_text`);
+                    if (textField) textField.value = '';
+                }
+                updatePreview();
+                showNotification('success', `Регион ${region} очищен`);
+            }
+        });
+    }
+    
+    // Вставка переменной в текст
+    function insertVariable(varName) {
+        const activeRegion = selectedRegion || 1;
+        const textField = document.getElementById(`region${activeRegion}_text`);
+        if (textField) {
+            textField.value += varName;
+            updatePreview();
+        }
+    }
+    
+    // Автообновление
+    function toggleAutoRefresh() {
+        autoRefresh = !autoRefresh;
+        const btn = document.getElementById('autoRefreshBtn');
+        
+        if (autoRefresh) {
+            previewTimer = setInterval(updatePreview, 3000);
+            btn.innerHTML = '<i class="bi bi-pause-circle"></i> Стоп';
+            btn.classList.remove('btn-light');
+            btn.classList.add('btn-warning');
+        } else {
+            clearInterval(previewTimer);
+            btn.innerHTML = '<i class="bi bi-play-circle"></i> Авто';
+            btn.classList.remove('btn-warning');
+            btn.classList.add('btn-light');
+        }
+    }
+    
+    // Уведомления
+    function showNotification(type, message) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed top-0 end-0 m-3`;
+        alertDiv.style.zIndex = '9999';
+        alertDiv.style.minWidth = '300px';
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(alertDiv);
+        setTimeout(() => alertDiv.remove(), 3000);
+    }
+    
+    // Сохранение шаблона
+    function saveTemplate() {
+        const templateName = prompt('Введите название шаблона:');
+        if (!templateName) return;
+        
+        const template = {
+            name: templateName,
+            date: new Date().toISOString(),
+            regions: {}
+        };
+        
+        for (let region = 0; region <= 3; region++) {
+            template.regions[region] = getRegionData(region);
+        }
+        
+        const templates = JSON.parse(localStorage.getItem('osdTemplates') || '{}');
+        templates[templateName] = template;
+        localStorage.setItem('osdTemplates', JSON.stringify(templates));
+        
+        showNotification('success', 'Шаблон сохранен');
+        loadTemplatesList();
+    }
+    
+    // Загрузка списка шаблонов
+    function loadTemplatesList() {
+        const templates = JSON.parse(localStorage.getItem('osdTemplates') || '{}');
+        const select = document.getElementById('templateSelect');
+        
+        select.innerHTML = '<option value="">Выберите шаблон...</option>';
+        Object.keys(templates).forEach(name => {
+            const date = new Date(templates[name].date).toLocaleDateString();
+            select.innerHTML += `<option value="${name}">${name} (${date})</option>`;
+        });
+    }
+    
+    // Применить шаблон
+    function applyTemplate() {
+        const select = document.getElementById('templateSelect');
+        const templateName = select.value;
+        if (!templateName) return;
+        
+        const templates = JSON.parse(localStorage.getItem('osdTemplates') || '{}');
+        const template = templates[templateName];
+        if (!template) return;
+        
+        for (let region = 0; region <= 3; region++) {
+            const regData = template.regions[region];
+            if (!regData) continue;
+            
+            if (region === 0) {
+                const enabled = document.getElementById(`region0_enabled`);
+                if (enabled) enabled.checked = regData.enabled || false;
+                
+                const posx = document.getElementById(`region0_posx`);
+                if (posx) posx.value = regData.posx || 10;
+                
+                const posy = document.getElementById(`region0_posy`);
+                if (posy) posy.value = regData.posy || 10;
+            } else {
+                const text = document.getElementById(`region${region}_text`);
+                if (text) text.value = regData.text || '';
+                
+                const color = document.getElementById(`region${region}_color`);
+                if (color) color.value = regData.color || '#ffffff';
+                
+                const size = document.getElementById(`region${region}_size`);
+                if (size) size.value = regData.size || 32;
+                
+                const posx = document.getElementById(`region${region}_posx`);
+                if (posx) posx.value = regData.posx || 10;
+                
+                const posy = document.getElementById(`region${region}_posy`);
+                if (posy) posy.value = regData.posy || 10;
+                
+                const font = document.getElementById(`region${region}_font`);
+                if (font) font.value = regData.font || 'UbuntuMono-Regular';
+                
+                const opacity = document.getElementById(`region${region}_opacity`);
+                if (opacity) opacity.value = regData.opacity || 255;
+            }
+        }
+        
+        updatePreview();
+        document.getElementById('activeTemplate').innerHTML = `<i class="bi bi-tag"></i> ${templateName}`;
+        showNotification('success', 'Шаблон применен');
+    }
+    
+    // Удалить шаблон
+    function deleteTemplate() {
+        const select = document.getElementById('templateSelect');
+        const templateName = select.value;
+        if (!templateName) return;
+        
+        if (!confirm(`Удалить шаблон "${templateName}"?`)) return;
+        
+        const templates = JSON.parse(localStorage.getItem('osdTemplates') || '{}');
+        delete templates[templateName];
+        localStorage.setItem('osdTemplates', JSON.stringify(templates));
+        
+        loadTemplatesList();
+        document.getElementById('activeTemplate').innerHTML = '';
+        showNotification('success', 'Шаблон удален');
+    }
+    
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+        loadTemplatesList();
+    });
+</script>
+{% endblock %}

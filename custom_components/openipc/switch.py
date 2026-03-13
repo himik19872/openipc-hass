@@ -21,15 +21,25 @@ async def async_setup_entry(hass, entry, async_add_entities):
             )
         _LOGGER.debug(f"Added {len(SWITCH_TYPES)} standard switches for {entry.data.get('name')}")
     
-    # Реле для Beward
+    # Реле для Beward (с учетом количества доступных реле)
     if device_type == DEVICE_TYPE_BEWARD and coordinator.beward:
-        entities.append(
-            BewardRelaySwitch(coordinator, entry, 1, "Main Relay")
-        )
-        entities.append(
-            BewardRelaySwitch(coordinator, entry, 2, "Secondary Relay")
-        )
-        _LOGGER.info(f"✅ Added Beward relays for {entry.data.get('name')}")
+        # Получаем количество реле из устройства
+        relay_count = 1
+        if hasattr(coordinator.beward, 'relay_count'):
+            relay_count = coordinator.beward.relay_count
+            _LOGGER.info(f"Beward device has {relay_count} relay(s)")
+        
+        # Добавляем реле в зависимости от доступного количества
+        if relay_count >= 1:
+            entities.append(
+                BewardRelaySwitch(coordinator, entry, 1, "Main Relay")
+            )
+        if relay_count >= 2:
+            entities.append(
+                BewardRelaySwitch(coordinator, entry, 2, "Secondary Relay")
+            )
+        
+        _LOGGER.info(f"✅ Added {min(relay_count, 2)} Beward relays for {entry.data.get('name')}")
     
     # Реле для OpenIPC (если есть поддержка)
     elif hasattr(coordinator, 'has_relay') and coordinator.has_relay:
@@ -133,6 +143,7 @@ class BewardRelaySwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = f"{entry.data.get('name', 'Beward')} {name_suffix}"
         self._attr_unique_id = f"{entry.entry_id}_beward_relay_{relay_id}"
         self._attr_icon = "mdi:relay"
+        self._restoring = True  # Флаг для предотвращения ложных срабатываний при восстановлении состояния
         _LOGGER.debug(f"Created Beward relay {relay_id} with unique_id: {self._attr_unique_id}")
 
     @property
@@ -140,12 +151,17 @@ class BewardRelaySwitch(CoordinatorEntity, SwitchEntity):
         """Return true if relay is on."""
         if self.coordinator.beward and hasattr(self.coordinator.beward, 'state'):
             state = self.coordinator.beward.state.get(f"relay_{self.relay_id}_state", False)
-            _LOGGER.debug(f"Relay {self.relay_id} state: {state}")
             return state
         return False
 
     async def async_turn_on(self, **kwargs):
         """Turn the relay on."""
+        # Пропускаем команды во время восстановления состояния при загрузке
+        if self._restoring:
+            self._restoring = False
+            _LOGGER.debug(f"Relay {self.relay_id} - ignoring turn_on during restore")
+            return
+            
         _LOGGER.info(f"🔌 Turning on Beward relay {self.relay_id}")
         if self.coordinator.beward and hasattr(self.coordinator.beward, 'async_set_relay'):
             success = await self.coordinator.beward.async_set_relay(self.relay_id, True)
@@ -154,6 +170,12 @@ class BewardRelaySwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs):
         """Turn the relay off."""
+        # Пропускаем команды во время восстановления состояния при загрузке
+        if self._restoring:
+            self._restoring = False
+            _LOGGER.debug(f"Relay {self.relay_id} - ignoring turn_off during restore")
+            return
+            
         _LOGGER.info(f"🔌 Turning off Beward relay {self.relay_id}")
         if self.coordinator.beward and hasattr(self.coordinator.beward, 'async_set_relay'):
             success = await self.coordinator.beward.async_set_relay(self.relay_id, False)
@@ -184,6 +206,8 @@ class OpenIPCRelaySwitch(CoordinatorEntity, SwitchEntity):
         self._attr_unique_id = f"{entry.entry_id}_relay_{relay_id}"
         self._attr_icon = "mdi:relay"
         self._state = False
+        self._restoring = True  # Флаг для предотвращения ложных срабатываний при восстановлении состояния
+        _LOGGER.debug(f"Created OpenIPC relay {relay_id} with unique_id: {self._attr_unique_id}")
 
     @property
     def is_on(self):
@@ -192,6 +216,12 @@ class OpenIPCRelaySwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs):
         """Turn the relay on."""
+        # Пропускаем команды во время восстановления состояния при загрузке
+        if self._restoring:
+            self._restoring = False
+            _LOGGER.debug(f"OpenIPC relay {self.relay_id} - ignoring turn_on during restore")
+            return
+            
         _LOGGER.info(f"🔌 Turning on OpenIPC relay {self.relay_id}")
         
         endpoints = [
@@ -219,6 +249,12 @@ class OpenIPCRelaySwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs):
         """Turn the relay off."""
+        # Пропускаем команды во время восстановления состояния при загрузке
+        if self._restoring:
+            self._restoring = False
+            _LOGGER.debug(f"OpenIPC relay {self.relay_id} - ignoring turn_off during restore")
+            return
+            
         _LOGGER.info(f"🔌 Turning off OpenIPC relay {self.relay_id}")
         
         endpoints = [

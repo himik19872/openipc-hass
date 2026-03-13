@@ -17,6 +17,33 @@ _LOGGER = logging.getLogger(__name__)
 class OpenIPCBewardDevice:
     """Beward device handler for DS07P-LP model."""
 
+    # Конфигурация реле в зависимости от модели
+    RELAY_CONFIG = {
+        "DS07P-LP": {
+            "count": 1,  # Только одно реле
+            "endpoints": {
+                "relay_1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
+                "relay_1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
+            }
+        },
+        "DS06M": {
+            "count": 2,  # Два реле
+            "endpoints": {
+                "relay_1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
+                "relay_1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
+                "relay_2_on": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=1",
+                "relay_2_off": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=0",
+            }
+        },
+        "default": {
+            "count": 1,  # По умолчанию одно реле
+            "endpoints": {
+                "relay_1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
+                "relay_1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
+            }
+        }
+    }
+
     def __init__(self, hass: HomeAssistant, host: str, username: str, password: str, camera_name: str):
         """Initialize Beward device."""
         self.hass = hass
@@ -36,6 +63,10 @@ class OpenIPCBewardDevice:
         self._hardware = None
         self._serial = None
         self._uptime = None
+        self._relay_count = 1  # По умолчанию
+        
+        # Флаг инициализации для предотвращения ложных срабатываний при перезагрузке
+        self._initialized = False
         
         self._state = {
             "online": False,
@@ -45,7 +76,6 @@ class OpenIPCBewardDevice:
             "last_break_in": None,
             "temperature": None,
             "relay_1_state": False,
-            "relay_2_state": False,
             "motion_detected": False,
             "door_open": False,
             "break_in_detected": False,
@@ -60,40 +90,25 @@ class OpenIPCBewardDevice:
             "echo_cancellation": "open",
         }
         
-        # Правильные эндпоинты из документации Beward
+        # Базовые эндпоинты
         self._endpoints = {
-            # Audio endpoints (раздел 3.6 и 12)
+            # Audio endpoints
             "audio_transmit": "/cgi-bin/audio/transmit.cgi",
             "audio_set": "/cgi-bin/audio_cgi?action=set",
             "audio_get": "/cgi-bin/audio_cgi?action=get",
             
-            # Snapshot endpoints (раздел 4)
+            # Snapshot endpoints
             "snapshot": "/cgi-bin/jpg/image.cgi",
             "snapshot_alt": "/cgi-bin/snapshot.cgi",
-            
-            # Relay endpoints из документации ALARM OUT (раздел 40.1, стр. 130)
-            "relay_1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
-            "relay_1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
-            "relay_2_on": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=1",
-            "relay_2_off": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=0",
-            "relay_all_close": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=2",
-            "relay_status": "/cgi-bin/alarmout_cgi?action=status",
             
             # System endpoints
             "system_info": "/cgi-bin/systeminfo_cgi",
             "status": "/cgi-bin/status.cgi",
             "alarm_status": "/cgi-bin/alarmstate_cgi?action=get",
             
-            # Альтернативные эндпоинты на всякий случай
-            "controller": "/cgi-bin/controller_cgi",
-        }
-        
-        # Сохраняем рабочие эндпоинты после обнаружения
-        self._working_endpoints = {
-            "relay_1_on": None,
-            "relay_1_off": None,
-            "relay_2_on": None,
-            "relay_2_off": None,
+            # Relay endpoints (будут обновлены после определения модели)
+            "relay_1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
+            "relay_1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
         }
         
         # Состояния
@@ -103,6 +118,17 @@ class OpenIPCBewardDevice:
         self.network_ok = True
         
         _LOGGER.info(f"✅ Beward device initialized for {camera_name} at {host}")
+
+    def _get_relay_config(self):
+        """Get relay configuration based on model."""
+        config = self.RELAY_CONFIG.get(self._model, self.RELAY_CONFIG["default"])
+        self._relay_count = config["count"]
+        
+        # Обновляем эндпоинты реле
+        for key, endpoint in config["endpoints"].items():
+            self._endpoints[key] = endpoint
+            
+        _LOGGER.info(f"📊 Relay configuration for {self._model}: {self._relay_count} relay(s)")
 
     async def async_connect(self) -> bool:
         """Connect to Beward device."""
@@ -115,6 +141,9 @@ class OpenIPCBewardDevice:
                     text = await response.text()
                     self._parse_system_info(text)
                     
+                    # Определяем конфигурацию реле по модели
+                    self._get_relay_config()
+                    
                     self._available = True
                     self._state["online"] = True
                     self.network_ok = True
@@ -123,11 +152,14 @@ class OpenIPCBewardDevice:
                     # Загружаем аудио конфигурацию
                     await self._async_update_audio_config()
                     
-                    # Проверяем эндпоинты для реле
+                    # Проверяем эндпоинты для реле (только проверка, без изменений состояния)
                     await self._verify_relay_endpoints()
                     
                     # Проверяем RTSP поток после подключения
                     self.hass.async_create_task(self.async_check_rtsp())
+                    
+                    # Отмечаем, что инициализация завершена
+                    self._initialized = True
                     return True
                 else:
                     _LOGGER.error(f"❌ Failed to connect to Beward: HTTP {response.status}")
@@ -139,36 +171,35 @@ class OpenIPCBewardDevice:
             return False
 
     async def _verify_relay_endpoints(self):
-        """Verify relay endpoints work."""
-        _LOGGER.info("🔍 Verifying Beward relay endpoints...")
+        """Verify relay endpoints work (without changing state)."""
+        _LOGGER.info(f"🔍 Verifying Beward relay endpoints for model {self._model}...")
         
-        relay_endpoints = [
-            ("relay_1_on", self._endpoints["relay_1_on"]),
-            ("relay_1_off", self._endpoints["relay_1_off"]),
-            ("relay_2_on", self._endpoints["relay_2_on"]),
-            ("relay_2_off", self._endpoints["relay_2_off"]),
-        ]
+        # Проверяем только существующие реле
+        relay_endpoints = []
+        if self._relay_count >= 1:
+            relay_endpoints.extend([
+                ("relay_1_on", self._endpoints["relay_1_on"]),
+                ("relay_1_off", self._endpoints["relay_1_off"]),
+            ])
+        if self._relay_count >= 2:
+            relay_endpoints.extend([
+                ("relay_2_on", self._endpoints["relay_2_on"]),
+                ("relay_2_off", self._endpoints["relay_2_off"]),
+            ])
         
         for key, endpoint in relay_endpoints:
             url = f"http://{self.host}{endpoint}"
             try:
-                _LOGGER.debug(f"Testing endpoint: {url}")
-                async with self.session.get(url, auth=self._auth, timeout=2) as response:
+                # Используем HEAD запрос для проверки доступности без изменения состояния
+                async with self.session.head(url, auth=self._auth, timeout=2) as response:
                     if response.status == 200:
-                        self._working_endpoints[key] = endpoint
-                        _LOGGER.info(f"✅ Relay endpoint working: {endpoint}")
+                        _LOGGER.info(f"✅ Relay endpoint available: {endpoint}")
                     else:
-                        _LOGGER.debug(f"Endpoint {endpoint} returned HTTP {response.status}")
+                        _LOGGER.warning(f"⚠️ Endpoint {endpoint} returned HTTP {response.status}")
             except Exception as e:
                 _LOGGER.debug(f"Endpoint {endpoint} failed: {e}")
         
-        # Проверяем, что все эндпоинты работают
-        required = ["relay_1_on", "relay_1_off", "relay_2_on", "relay_2_off"]
-        missing = [r for r in required if not self._working_endpoints.get(r)]
-        if missing:
-            _LOGGER.warning(f"⚠️ Some relay endpoints not working: {missing}")
-        else:
-            _LOGGER.info("✅ All relay endpoints verified")
+        _LOGGER.info(f"✅ Relay verification complete for {self._relay_count} relay(s)")
 
     async def async_update(self) -> Dict[str, Any]:
         """Update device state."""
@@ -194,44 +225,65 @@ class OpenIPCBewardDevice:
 
     def _parse_system_info(self, text: str):
         """Parse system info response."""
+        # SoftwareVersion=3.1.0.0.7.18.40 или может быть "1.19"
         fw_match = re.search(r'SoftwareVersion=([^\n\r]+)', text)
         if fw_match:
             self._firmware = fw_match.group(1).strip()
+            _LOGGER.debug(f"Firmware version: {self._firmware}")
         
+        # HardwareVersion=Hi3518 IP Camera
         hw_match = re.search(r'HardwareVersion=([^\n\r]+)', text)
         if hw_match:
             self._hardware = hw_match.group(1).strip()
         
+        # DeviceModel=DS07P-LP
         model_match = re.search(r'DeviceModel=([^\n\r]+)', text)
         if model_match:
             self._model = model_match.group(1).strip()
+            _LOGGER.info(f"Detected Beward model: {self._model}")
         
+        # DeviceUUID=...
         uuid_match = re.search(r'DeviceUUID=([^\n\r]+)', text)
         if uuid_match:
             self._serial = uuid_match.group(1).strip()
         
+        # UpTime=00:21:32
         uptime_match = re.search(r'UpTime=([^\n\r]+)', text)
         if uptime_match:
             self._uptime = uptime_match.group(1).strip()
+            # Конвертируем в секунды, только если формат правильный
             parts = self._uptime.split(':')
             if len(parts) == 3:
-                self._state["uptime_seconds"] = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                try:
+                    hours = int(parts[0])
+                    minutes = int(parts[1])
+                    seconds = int(parts[2])
+                    self._state["uptime_seconds"] = hours * 3600 + minutes * 60 + seconds
+                    _LOGGER.debug(f"Uptime parsed: {self._uptime} -> {self._state['uptime_seconds']}s")
+                except ValueError as e:
+                    _LOGGER.debug(f"Could not parse uptime '{self._uptime}': {e}")
+                    self._state["uptime_seconds"] = 0
+            else:
+                _LOGGER.debug(f"Unexpected uptime format: {self._uptime}")
 
     def _parse_status(self, text: str):
         """Parse status response."""
+        # Температура
         temp_match = re.search(r'CPU Temp\s*:\s*([0-9.]+)', text, re.IGNORECASE)
         if temp_match:
             try:
                 self._state["temperature"] = float(temp_match.group(1))
-            except:
-                pass
+            except ValueError:
+                _LOGGER.debug(f"Could not parse temperature: {temp_match.group(1)}")
         
+        # Модель
         model_match = re.search(r'Model\s*:\s*([^\n\r]+)', text, re.IGNORECASE)
         if model_match:
             self._model = model_match.group(1).strip()
 
     def _parse_alarm_status(self, text: str):
         """Parse alarm status response."""
+        # Motion detection
         if 'MotionDetection' in text and 'Alarm Status=1' in text:
             self.motion_detected = True
             self._state["motion_detected"] = True
@@ -240,6 +292,7 @@ class OpenIPCBewardDevice:
             self.motion_detected = False
             self._state["motion_detected"] = False
         
+        # Sensor alarm (door)
         if 'SensorAlarm' in text and 'Alarm Status=1' in text:
             self.door_open = True
             self._state["door_open"] = True
@@ -261,23 +314,28 @@ class OpenIPCBewardDevice:
 
     def _parse_audio_config(self, text: str):
         """Parse audio configuration."""
+        # AudioSwitch=open
         switch_match = re.search(r'AudioSwitch=(\w+)', text)
         if switch_match:
             self._audio_config["audio_switch"] = switch_match.group(1)
         
+        # AudioType=G.711U
         type_match = re.search(r'AudioType=([^\n\r]+)', text)
         if type_match:
             self._audio_config["audio_type"] = type_match.group(1).strip()
         
+        # AudioInVol=8
         in_vol_match = re.search(r'AudioInVol=(\d+)', text)
         if in_vol_match:
             self._audio_config["audio_in_vol"] = int(in_vol_match.group(1))
         
+        # AudioOutVol=15
         out_vol_match = re.search(r'AudioOutVol=(\d+)', text)
         if out_vol_match:
             self._audio_config["audio_out_vol"] = int(out_vol_match.group(1))
             self._state["volume"] = int(out_vol_match.group(1)) * 100 // 15
         
+        # EchoCancellation=open
         echo_match = re.search(r'EchoCancellation=(\w+)', text)
         if echo_match:
             self._audio_config["echo_cancellation"] = echo_match.group(1)
@@ -324,12 +382,25 @@ class OpenIPCBewardDevice:
 
     async def async_set_relay(self, relay_id: int = 1, state: bool = True) -> bool:
         """Set relay state (on/off) using endpoints from documentation."""
+        # Защита от ложных срабатываний при инициализации
+        if not self._initialized:
+            _LOGGER.debug(f"Ignoring relay {relay_id} change during initialization")
+            return False
+        
+        # Проверяем, существует ли такое реле
+        if relay_id > self._relay_count:
+            _LOGGER.warning(f"Relay {relay_id} not available on {self._model} (only {self._relay_count} relay(s))")
+            return False
+            
         try:
-            # Используем эндпоинты из документации
+            # Используем эндпоинты в зависимости от номера реле
             if relay_id == 1:
                 endpoint = self._endpoints["relay_1_on"] if state else self._endpoints["relay_1_off"]
-            else:
+            elif relay_id == 2 and self._relay_count >= 2:
                 endpoint = self._endpoints["relay_2_on"] if state else self._endpoints["relay_2_off"]
+            else:
+                _LOGGER.error(f"Invalid relay ID {relay_id}")
+                return False
             
             url = f"http://{self.host}{endpoint}"
             _LOGGER.info(f"🔌 Setting Beward relay {relay_id} to {'ON' if state else 'OFF'}")
@@ -369,6 +440,12 @@ class OpenIPCBewardDevice:
         _LOGGER.info(f"🚪 Opening {'main' if main else 'secondary'} door on Beward")
         
         relay_id = 1 if main else 2
+        
+        # Проверяем, существует ли такое реле
+        if relay_id > self._relay_count:
+            _LOGGER.warning(f"Cannot open door: relay {relay_id} not available")
+            return False
+            
         success = await self.async_set_relay(relay_id, True)
         
         if success:
@@ -503,10 +580,14 @@ class OpenIPCBewardDevice:
         await asyncio.sleep(0.5)
         results["relay1_off"] = await self.async_set_relay(1, False)
         
-        _LOGGER.info("Testing Beward relay 2...")
-        results["relay2_on"] = await self.async_set_relay(2, True)
-        await asyncio.sleep(0.5)
-        results["relay2_off"] = await self.async_set_relay(2, False)
+        # Проверяем, есть ли второе реле
+        if self._relay_count >= 2:
+            _LOGGER.info("Testing Beward relay 2...")
+            results["relay2_on"] = await self.async_set_relay(2, True)
+            await asyncio.sleep(0.5)
+            results["relay2_off"] = await self.async_set_relay(2, False)
+        else:
+            _LOGGER.info("Second relay not available on this model")
         
         _LOGGER.info("Testing Beward audio...")
         results["beep"] = await self.async_play_beep()
@@ -536,6 +617,11 @@ class OpenIPCBewardDevice:
     @property
     def serial(self) -> Optional[str]:
         return self._serial
+
+    @property
+    def relay_count(self) -> int:
+        """Return number of available relays."""
+        return self._relay_count
 
     @property
     def rtsp_url_main(self) -> str:

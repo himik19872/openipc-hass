@@ -1,0 +1,4 @@
+# Настройки репозитория для Home Assistant
+name: OpenIPC Add-ons
+url: https://github.com/OpenIPC/hass/tree/main/addon
+maintainer: himik19872

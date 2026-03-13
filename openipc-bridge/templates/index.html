@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block nav_home %}active{% endblock %}
+{% block title %}Главная{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-info-circle"></i> Состояние сервиса
+            </div>
+            <div class="card-body">
+                <div class="row" id="serviceStatus">
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h3 id="uptime">-</h3>
+                                <small>Время работы</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h3 id="requests">-</h3>
+                                <small>Запросов</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h3 id="camerasCount">-</h3>
+                                <small>Камер</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h3 id="activeScans">-</h3>
+                                <small>Активных сканирований</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-camera"></i> Камеры
+            </div>
+            <div class="card-body">
+                <div class="list-group" id="camerasList">
+                    <!-- Загружается через JS -->
+                    <div class="text-center p-3">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                </div>
+                <a href="/config" class="btn btn-primary mt-3">
+                    <i class="bi bi-gear"></i> Управление камерами
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-qr-code-scan"></i> Последние QR-коды
+            </div>
+            <div class="card-body">
+                <div id="qrStats">
+                    <!-- Загружается через JS -->
+                    <div class="text-center p-3">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                    </div>
+                </div>
+                <a href="/qr" class="btn btn-primary mt-3">
+                    <i class="bi bi-qr-code-scan"></i> Перейти к QR-сканеру
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-activity"></i> Активные задачи
+            </div>
+            <div class="card-body">
+                <table class="table" id="activeJobs">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Камера</th>
+                            <th>Тип</th>
+                            <th>Прогресс</th>
+                            <th>Статус</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Загружается через JS -->
+                        <tr>
+                            <td colspan="6" class="text-center">Нет активных задач</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function loadDashboard() {
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('uptime').innerHTML = data.uptime || '0';
+                document.getElementById('requests').innerHTML = data.requests || '0';
+                document.getElementById('camerasCount').innerHTML = data.cameras_count || '0';
+                document.getElementById('activeScans').innerHTML = data.active_scans || '0';
+            });
+            
+        fetch('/api/cameras/status')
+            .then(r => r.json())
+            .then(data => {
+                const list = document.getElementById('camerasList');
+                list.innerHTML = '';
+                if (data.cameras && data.cameras.length > 0) {
+                    data.cameras.forEach(cam => {
+                        const statusClass = cam.online ? 'bg-success' : 'bg-secondary';
+                        const statusText = cam.online ? 'Online' : 'Offline';
+                        
+                        list.innerHTML += `
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>${cam.name}</strong><br>
+                                    <small>${cam.ip}</small>
+                                </div>
+                                <span class="badge ${statusClass}">${statusText}</span>
+                            </div>
+                        `;
+                    });
+                } else {
+                    list.innerHTML = '<div class="list-group-item text-center">Нет настроенных камер</div>';
+                }
+            });
+            
+        fetch('/api/qr/stats')
+            .then(r => r.json())
+            .then(data => {
+                const stats = document.getElementById('qrStats');
+                if (data.success && data.stats) {
+                    stats.innerHTML = `
+                        <table class="table table-sm">
+                            <tr>
+                                <td>Всего сканирований:</td>
+                                <td><strong>${data.stats.total_requests || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Успешных:</td>
+                                <td><strong class="text-success">${data.stats.successful_scans || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Кодов найдено:</td>
+                                <td><strong>${data.stats.total_codes_found || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Последний код:</td>
+                                <td><strong>${data.stats.last_code || '—'}</strong></td>
+                            </tr>
+                        </table>
+                    `;
+                } else {
+                    stats.innerHTML = '<p class="text-muted">Нет данных</p>';
+                }
+            });
+            
+        fetch('/api/active_jobs')
+            .then(r => r.json())
+            .then(data => {
+                const tbody = document.querySelector('#activeJobs tbody');
+                tbody.innerHTML = '';
+                if (data.jobs && data.jobs.length > 0) {
+                    data.jobs.forEach(job => {
+                        const statusClass = job.status === 'running' ? 'bg-warning' : 'bg-info';
+                        tbody.innerHTML += `
+                            <tr>
+                                <td>${job.id.substring(0, 8)}</td>
+                                <td>${job.camera}</td>
+                                <td>${job.type}</td>
+                                <td>
+                                    <div class="progress">
+                                        <div class="progress-bar" style="width: ${job.progress}%">${job.progress}%</div>
+                                    </div>
+                                </td>
+                                <td><span class="badge ${statusClass}">${job.status}</span></td>
+                                <td>
+                                    <button class="btn btn-sm btn-danger" onclick="stopJob('${job.id}')">
+                                        <i class="bi bi-stop"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center">Нет активных задач</td></tr>';
+                }
+            });
+    }
+    
+    function stopJob(jobId) {
+        if (confirm('Остановить задачу?')) {
+            fetch(`/api/stop_scan/${jobId}`, {method: 'POST'})
+                .then(() => loadDashboard());
+        }
+    }
+    
+    // Загружаем при старте и каждые 5 секунд
+    loadDashboard();
+    setInterval(loadDashboard, 5000);
+</script>
+{% endblock %}

@@ -8,7 +8,8 @@
     "ssdp",
     "zeroconf",
     "telegram_bot",
-    "media_player"
+    "media_player",
+    "http"  
   ],
   "documentation": "https://github.com/OpenIPC/hass",
   "integration_type": "device",

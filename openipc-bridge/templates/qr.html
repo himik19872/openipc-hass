@@ -1,0 +1,1045 @@
+{% extends "base.html" %}
+{% block nav_qr %}active{% endblock %}
+{% block title %}QR-сканер и генератор{% endblock %}
+
+{% block extra_css %}
+<style>
+    .qr-preview {
+        max-width: 100%;
+        max-height: 400px;
+        border: 2px solid #ddd;
+        border-radius: 5px;
+        transition: all 0.3s;
+    }
+    .qr-preview.scan-active {
+        border-color: #28a745;
+        box-shadow: 0 0 20px rgba(40, 167, 69, 0.5);
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+    }
+    .scan-results {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .qr-code-item {
+        border-left: 4px solid #0d6efd;
+        margin-bottom: 10px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 5px;
+        transition: all 0.2s;
+    }
+    .qr-code-item:hover {
+        background: #e9ecef;
+        transform: translateX(5px);
+    }
+    .qr-code-item.success {
+        border-left-color: #28a745;
+    }
+    .qr-code-item.timeout {
+        border-left-color: #dc3545;
+    }
+    .qr-code-item.warning {
+        border-left-color: #ffc107;
+    }
+    .stats-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    .debug-log {
+        background: #1e1e1e;
+        color: #00ff00;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: monospace;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    .generated-qr {
+        max-width: 300px;
+        max-height: 300px;
+        margin: 0 auto;
+        border: 2px solid #28a745;
+        border-radius: 10px;
+        padding: 10px;
+        background: #fff;
+    }
+    .generated-qr img {
+        width: 100%;
+        height: auto;
+    }
+    .nav-pills .nav-link.active {
+        background-color: #0d6efd;
+    }
+    #qrPlaceholder {
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    .qr-option-group {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+    .color-preview {
+        width: 30px;
+        height: 30px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        display: inline-block;
+        vertical-align: middle;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2><i class="bi bi-qr-code-scan"></i> QR-сканер и генератор</h2>
+        <p class="text-muted">Сканирование QR-кодов с камер и генерация своих кодов</p>
+    </div>
+</div>
+
+<!-- Вкладки -->
+<ul class="nav nav-pills mb-4" id="qrTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="scanner-tab" data-bs-toggle="tab" data-bs-target="#scanner" type="button" role="tab">
+            <i class="bi bi-qr-code-scan"></i> Сканер
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="generator-tab" data-bs-toggle="tab" data-bs-target="#generator" type="button" role="tab">
+            <i class="bi bi-qr-code"></i> Генератор QR
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history" type="button" role="tab">
+            <i class="bi bi-clock-history"></i> История
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="qrTabsContent">
+    <!-- ВКЛАДКА 1: СКАНЕР -->
+    <div class="tab-pane fade show active" id="scanner" role="tabpanel">
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <i class="bi bi-gear"></i> Управление сканированием
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Камера</label>
+                            <select class="form-select" id="cameraSelect">
+                                <option value="">Выберите камеру...</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Ожидаемый код (опционально)</label>
+                            <input type="text" class="form-control" id="expectedCode" placeholder="a4625vol">
+                            <small class="text-muted">Если указан, сканирование остановится при нахождении этого кода</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Таймаут (секунд)</label>
+                            <input type="number" class="form-control" id="timeout" value="60" min="5" max="600">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Режим сканирования</label>
+                            <select class="form-select" id="scanMode">
+                                <option value="continuous">Непрерывный (каждые 2 сек)</option>
+                                <option value="single">Однократный</option>
+                                <option value="periodic">Периодический (каждые 5 сек)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success" onclick="startScan()" id="startBtn">
+                                <i class="bi bi-play"></i> Начать сканирование
+                            </button>
+                            <button class="btn btn-danger" onclick="stopCurrentScan()" id="stopBtn" disabled>
+                                <i class="bi bi-stop"></i> Остановить
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3 stats-card">
+                    <div class="card-header bg-transparent text-white">
+                        <i class="bi bi-bar-chart"></i> Статистика
+                    </div>
+                    <div class="card-body">
+                        <div id="qrStats">
+                            <div class="text-center">
+                                <div class="spinner-border text-light" role="status">
+                                    <span class="visually-hidden">Загрузка...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-header bg-warning">
+                        <i class="bi bi-trash"></i> Отладка
+                    </div>
+                    <div class="card-body">
+                        <button class="btn btn-warning btn-sm w-100 mb-2" onclick="clearDebug()">
+                            <i class="bi bi-eraser"></i> Очистить отладочные снимки
+                        </button>
+                        <button class="btn btn-info btn-sm w-100 mb-2" onclick="viewDebugLog()">
+                            <i class="bi bi-file-text"></i> Просмотреть лог
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-camera"></i> Просмотр с камеры
+                        </div>
+                        <div>
+                            <span class="badge bg-light text-dark" id="scanStatus">
+                                <i class="bi bi-circle"></i> Не активно
+                            </span>
+                        </div>
+                    </div>
+                    <div class="card-body text-center">
+                        <img id="cameraPreview" class="qr-preview" src="" alt="Предпросмотр с камеры">
+                        <div class="mt-2">
+                            <small class="text-muted" id="previewInfo"></small>
+                        </div>
+                        <div class="mt-2">
+                            <button class="btn btn-sm btn-outline-primary" onclick="refreshPreview()">
+                                <i class="bi bi-arrow-repeat"></i> Обновить
+                            </button>
+                            <button class="btn btn-sm btn-outline-success" onclick="captureAndScan()">
+                                <i class="bi bi-qr-code-scan"></i> Сделать снимок и сканировать
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-list"></i> Результаты сканирования
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-light" onclick="clearResults()">
+                                <i class="bi bi-trash"></i> Очистить
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body scan-results" id="scanResults">
+                        <div class="text-center text-muted py-4">
+                            <i class="bi bi-qr-code" style="font-size: 3rem;"></i>
+                            <p>Здесь появятся отсканированные QR-коды</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ВКЛАДКА 2: ГЕНЕРАТОР QR (ИСПРАВЛЕННАЯ ВЕРСИЯ) -->
+    <div class="tab-pane fade" id="generator" role="tabpanel">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <i class="bi bi-qr-code"></i> Генератор QR-кода
+                    </div>
+                    <div class="card-body">
+                        <div class="qr-option-group">
+                            <div class="mb-3">
+                                <label class="form-label">Текст/данные для QR-кода</label>
+                                <textarea class="form-control" id="qrText" rows="3" placeholder="Введите текст или URL...">https://openipc.org</textarea>
+                            </div>
+                        </div>
+                        
+                        <div class="qr-option-group">
+                            <h6 class="mb-3">Настройки размера</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Размер</label>
+                                    <select class="form-select" id="qrSize">
+                                        <option value="100">100x100</option>
+                                        <option value="150">150x150</option>
+                                        <option value="200" selected>200x200</option>
+                                        <option value="250">250x250</option>
+                                        <option value="300">300x300</option>
+                                        <option value="400">400x400</option>
+                                        <option value="500">500x500</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Коррекция ошибок</label>
+                                    <select class="form-select" id="qrErrorCorrection">
+                                        <option value="L">L (7%)</option>
+                                        <option value="M" selected>M (15%)</option>
+                                        <option value="Q">Q (25%)</option>
+                                        <option value="H">H (30%)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="qr-option-group">
+                            <h6 class="mb-3">Цвета</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Цвет QR</label>
+                                    <div class="d-flex align-items-center">
+                                        <input type="color" class="form-control form-control-color me-2" id="qrColor" value="#000000">
+                                        <span class="color-preview" style="background: #000000;"></span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Цвет фона</label>
+                                    <div class="d-flex align-items-center">
+                                        <input type="color" class="form-control form-control-color me-2" id="qrBgColor" value="#ffffff">
+                                        <span class="color-preview" style="background: #ffffff;"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success" onclick="generateQR()">
+                                <i class="bi bi-qr-code"></i> Сгенерировать
+                            </button>
+                            <button class="btn btn-primary" onclick="saveQR()" id="saveQRBtn" disabled>
+                                <i class="bi bi-save"></i> Сохранить в файл
+                            </button>
+                            <button class="btn btn-info" onclick="sendQRToTelegram()" id="sendQRBtn" disabled>
+                                <i class="bi bi-telegram"></i> Отправить в Telegram
+                            </button>
+                        </div>
+                        
+                        <!-- Индикатор загрузки -->
+                        <div id="qrLoading" class="text-center mt-3" style="display: none;">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Генерация...</span>
+                            </div>
+                            <p class="mt-2">Генерация QR-кода...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <i class="bi bi-eye"></i> Предпросмотр
+                    </div>
+                    <div class="card-body text-center">
+                        <div class="generated-qr" id="qrPreviewContainer">
+                            <img id="qrPreview" src="" alt="Сгенерированный QR-код" class="img-fluid" style="display: none;">
+                            <div id="qrPlaceholder" class="text-muted py-5">
+                                <i class="bi bi-qr-code" style="font-size: 4rem;"></i>
+                                <p class="mt-2">Нажмите "Сгенерировать"</p>
+                            </div>
+                        </div>
+                        <div class="mt-3" id="qrDataInfo"></div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white">
+                        <i class="bi bi-telegram"></i> Отправка в Telegram
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Chat ID (если не указан в конфиге)</label>
+                            <input type="text" class="form-control" id="telegramChatId" placeholder="Например: 123456789">
+                            <small class="text-muted">Оставьте пустым, чтобы использовать chat_id из конфига</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Подпись к изображению</label>
+                            <input type="text" class="form-control" id="telegramCaption" value="QR-код">
+                        </div>
+                        <div class="alert alert-info" id="telegramStatus" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ВКЛАДКА 3: ИСТОРИЯ -->
+    <div class="tab-pane fade" id="history" role="tabpanel">
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-clock-history"></i> История сканирований
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-light" onclick="exportHistoryCSV()">
+                        <i class="bi bi-file-earmark-spreadsheet"></i> Экспорт CSV
+                    </button>
+                    <button class="btn btn-sm btn-outline-light" onclick="clearHistory()">
+                        <i class="bi bi-trash"></i> Очистить
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="historyTable">
+                        <thead>
+                            <tr>
+                                <th>Время</th>
+                                <th>Камера</th>
+                                <th>QR-код</th>
+                                <th>Тип</th>
+                                <th>Статус</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyBody">
+                            <tr>
+                                <td colspan="6" class="text-center text-muted py-4">
+                                    <i class="bi bi-clock" style="font-size: 2rem;"></i>
+                                    <p>История пуста</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для лога -->
+<div class="modal fade" id="debugLogModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title">
+                    <i class="bi bi-file-text"></i> Отладочный лог QR
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="debugLogContent" class="debug-log"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="button" class="btn btn-danger" onclick="clearDebugLog()">Очистить лог</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Глобальные переменные
+    let currentScanId = null;
+    let previewInterval = null;
+    let currentCamera = null;
+    let generatedQRData = null;
+    let scanHistory = JSON.parse(localStorage.getItem('qrHistory') || '[]');
+    
+    // Загрузка списка камер
+    fetch('/api/cameras/status')
+        .then(r => r.json())
+        .then(data => {
+            const select = document.getElementById('cameraSelect');
+            select.innerHTML = '<option value="">Выберите камеру...</option>';
+            
+            if (data.cameras && data.cameras.length > 0) {
+                data.cameras.forEach(cam => {
+                    select.innerHTML += `<option value="${cam.ip}">${cam.name} (${cam.ip})</option>`;
+                });
+            }
+        });
+    
+    // Загрузка статистики
+    function loadStats() {
+        fetch('/api/qr/stats')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const stats = data.stats;
+                    document.getElementById('qrStats').innerHTML = `
+                        <table class="table table-sm text-white">
+                            <tr>
+                                <td>Всего запросов:</td>
+                                <td><strong>${stats.total_requests || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Успешных:</td>
+                                <td><strong>${stats.successful_scans || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Неудачных:</td>
+                                <td><strong>${stats.failed_scans || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Кодов найдено:</td>
+                                <td><strong>${stats.total_codes_found || 0}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Последний код:</td>
+                                <td><strong>${stats.last_code || '—'}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Последнее сканирование:</td>
+                                <td><strong>${stats.last_scan_time ? new Date(stats.last_scan_time).toLocaleString() : '—'}</strong></td>
+                            </tr>
+                        </table>
+                    `;
+                }
+            });
+    }
+    loadStats();
+    setInterval(loadStats, 5000);
+    
+    // Загрузка истории
+    function loadHistory() {
+        const tbody = document.getElementById('historyBody');
+        if (scanHistory.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">
+                        <i class="bi bi-clock" style="font-size: 2rem;"></i>
+                        <p>История пуста</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = scanHistory.slice().reverse().map(item => `
+            <tr>
+                <td>${new Date(item.timestamp).toLocaleString()}</td>
+                <td>${item.camera || '—'}</td>
+                <td><code class="text-primary">${item.data}</code></td>
+                <td><span class="badge bg-info">${item.type || 'QRCODE'}</span></td>
+                <td><span class="badge bg-success">Найден</span></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary" onclick="copyToClipboard('${item.data.replace(/'/g, "\\'")}')" title="Копировать">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" onclick="generateFromHistory('${item.data.replace(/'/g, "\\'")}')" title="Сгенерировать QR">
+                        <i class="bi bi-qr-code"></i>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    }
+    
+    // Добавление в историю
+    function addToHistory(data, camera, type) {
+        scanHistory.push({
+            timestamp: new Date().toISOString(),
+            data: data,
+            camera: camera,
+            type: type || 'QRCODE'
+        });
+        
+        // Ограничим историю 100 записями
+        if (scanHistory.length > 100) {
+            scanHistory = scanHistory.slice(-100);
+        }
+        
+        localStorage.setItem('qrHistory', JSON.stringify(scanHistory));
+        loadHistory();
+    }
+    
+    // Экспорт истории в CSV
+    function exportHistoryCSV() {
+        if (scanHistory.length === 0) {
+            alert('История пуста');
+            return;
+        }
+        
+        let csv = 'Время,Камера,QR-код,Тип\n';
+        scanHistory.forEach(item => {
+            csv += `"${new Date(item.timestamp).toLocaleString()}","${item.camera || ''}","${item.data}","${item.type}"\n`;
+        });
+        
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `qr_history_${new Date().toISOString().slice(0,10)}.csv`;
+        link.click();
+    }
+    
+    // Очистка истории
+    function clearHistory() {
+        if (confirm('Очистить историю сканирований?')) {
+            scanHistory = [];
+            localStorage.setItem('qrHistory', '[]');
+            loadHistory();
+            showNotification('success', 'История очищена');
+        }
+    }
+    
+    // Копирование в буфер
+    function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => {
+            showNotification('success', 'Скопировано: ' + text.substring(0, 30) + (text.length > 30 ? '...' : ''));
+        }).catch(err => {
+            // Fallback для старых браузеров
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showNotification('success', 'Скопировано');
+        });
+    }
+    
+    // Генерация QR из истории
+    function generateFromHistory(text) {
+        document.getElementById('qrText').value = text;
+        
+        // Переключаемся на вкладку генератора
+        const generatorTab = document.getElementById('generator-tab');
+        const tab = new bootstrap.Tab(generatorTab);
+        tab.show();
+        
+        setTimeout(() => generateQR(), 500);
+    }
+    
+    // ========== СКАНЕР ==========
+    
+    function startScan() {
+        const camera = document.getElementById('cameraSelect').value;
+        if (!camera) {
+            alert('Выберите камеру');
+            return;
+        }
+        
+        currentCamera = camera;
+        const expectedCode = document.getElementById('expectedCode').value;
+        const timeout = document.getElementById('timeout').value;
+        
+        fetch('/api/start_scan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                camera_id: camera,
+                expected_code: expectedCode,
+                timeout: parseInt(timeout)
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                currentScanId = data.scan_id;
+                document.getElementById('scanStatus').innerHTML = '<i class="bi bi-circle-fill"></i> Активно';
+                document.getElementById('scanStatus').className = 'badge bg-success';
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                const preview = document.getElementById('cameraPreview');
+                preview.classList.add('scan-active');
+                
+                startPreview(camera);
+                checkScanStatus();
+                
+                addResult({
+                    type: 'info',
+                    message: `Сканирование запущено (таймаут: ${timeout}с)`,
+                    time: new Date().toLocaleTimeString()
+                });
+            }
+        });
+    }
+    
+    function stopCurrentScan() {
+        if (currentScanId) {
+            fetch(`/api/stop_scan/${currentScanId}`, {method: 'POST'})
+                .then(() => {
+                    stopScan();
+                    addResult({
+                        type: 'info',
+                        message: 'Сканирование остановлено',
+                        time: new Date().toLocaleTimeString()
+                    });
+                });
+        }
+    }
+    
+    function stopScan() {
+        currentScanId = null;
+        document.getElementById('scanStatus').innerHTML = '<i class="bi bi-circle"></i> Не активно';
+        document.getElementById('scanStatus').className = 'badge bg-secondary';
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('stopBtn').disabled = true;
+        
+        const preview = document.getElementById('cameraPreview');
+        preview.classList.remove('scan-active');
+        
+        if (previewInterval) {
+            clearInterval(previewInterval);
+            previewInterval = null;
+        }
+    }
+    
+    function startPreview(camera) {
+        updatePreview(camera);
+        if (previewInterval) {
+            clearInterval(previewInterval);
+        }
+        previewInterval = setInterval(() => updatePreview(camera), 2000);
+    }
+    
+    function updatePreview(camera) {
+        const img = document.getElementById('cameraPreview');
+        img.src = `/api/camera/${camera}/snapshot?_=${Date.now()}`;
+        document.getElementById('previewInfo').innerHTML = `Обновлено: ${new Date().toLocaleTimeString()}`;
+    }
+    
+    function refreshPreview() {
+        if (currentCamera) {
+            updatePreview(currentCamera);
+        } else {
+            const camera = document.getElementById('cameraSelect').value;
+            if (camera) {
+                updatePreview(camera);
+            }
+        }
+    }
+    
+    function captureAndScan() {
+        const camera = document.getElementById('cameraSelect').value;
+        if (!camera) {
+            alert('Выберите камеру');
+            return;
+        }
+        
+        fetch(`/api/camera/${camera}/snapshot`)
+            .then(r => r.blob())
+            .then(blob => {
+                const reader = new FileReader();
+                reader.onloadend = function() {
+                    const base64data = reader.result.split(',')[1];
+                    
+                    fetch('/api/barcode', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            image: base64data,
+                            camera_id: camera
+                        })
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success && data.barcodes && data.barcodes.length > 0) {
+                            data.barcodes.forEach(barcode => {
+                                addScanResult({
+                                    data: barcode.data,
+                                    type: barcode.type,
+                                    time: new Date().toLocaleTimeString()
+                                });
+                                addToHistory(barcode.data, camera, barcode.type);
+                            });
+                        } else {
+                            addResult({
+                                type: 'warning',
+                                message: 'QR-код не найден',
+                                time: new Date().toLocaleTimeString()
+                            });
+                        }
+                    });
+                };
+                reader.readAsDataURL(blob);
+            });
+    }
+    
+    function checkScanStatus() {
+        if (!currentScanId) return;
+        
+        fetch(`/api/scan_status/${currentScanId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const scan = data.scan;
+                    
+                    if (scan.result) {
+                        addScanResult({
+                            data: scan.result.data,
+                            type: scan.result.type,
+                            time: new Date().toLocaleTimeString()
+                        });
+                        addToHistory(scan.result.data, scan.camera_id, scan.result.type);
+                    }
+                    
+                    if (scan.status === 'completed' || scan.status === 'timeout' || scan.status === 'stopped') {
+                        stopScan();
+                        
+                        if (scan.status === 'completed') {
+                            addResult({
+                                type: 'success',
+                                message: 'Сканирование завершено - код найден',
+                                time: new Date().toLocaleTimeString()
+                            });
+                        } else if (scan.status === 'timeout') {
+                            addResult({
+                                type: 'warning',
+                                message: 'Сканирование завершено по таймауту',
+                                time: new Date().toLocaleTimeString()
+                            });
+                        }
+                    } else {
+                        setTimeout(checkScanStatus, 1000);
+                    }
+                }
+            });
+    }
+    
+    function addScanResult(qrData) {
+        const results = document.getElementById('scanResults');
+        
+        const resultDiv = document.createElement('div');
+        resultDiv.className = 'qr-code-item success';
+        resultDiv.innerHTML = `
+            <div class="d-flex justify-content-between">
+                <strong><i class="bi bi-qr-code"></i> ${qrData.data}</strong>
+                <small>${qrData.time}</small>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-1">
+                <small class="text-muted">Тип: ${qrData.type || 'QRCODE'}</small>
+                <button class="btn btn-sm btn-link p-0" onclick="copyToClipboard('${qrData.data.replace(/'/g, "\\'")}')">
+                    <i class="bi bi-clipboard"></i> Копировать
+                </button>
+            </div>
+        `;
+        
+        results.insertBefore(resultDiv, results.firstChild);
+        
+        // Ограничим количество результатов в интерфейсе
+        while (results.children.length > 20) {
+            results.removeChild(results.lastChild);
+        }
+    }
+    
+    function addResult(result) {
+        const results = document.getElementById('scanResults');
+        
+        const resultDiv = document.createElement('div');
+        resultDiv.className = `qr-code-item ${result.type === 'success' ? 'success' : (result.type === 'warning' ? 'warning' : '')}`;
+        resultDiv.innerHTML = `
+            <div class="d-flex justify-content-between">
+                <span>${result.message}</span>
+                <small>${result.time}</small>
+            </div>
+        `;
+        
+        results.insertBefore(resultDiv, results.firstChild);
+        
+        // Ограничим количество результатов в интерфейсе
+        while (results.children.length > 20) {
+            results.removeChild(results.lastChild);
+        }
+    }
+    
+    function clearResults() {
+        document.getElementById('scanResults').innerHTML = `
+            <div class="text-center text-muted py-4">
+                <i class="bi bi-qr-code" style="font-size: 3rem;"></i>
+                <p>Здесь появятся отсканированные QR-коды</p>
+            </div>
+        `;
+    }
+    
+    // ========== ГЕНЕРАТОР QR (ИСПРАВЛЕННАЯ ВЕРСИЯ) ==========
+    
+    function generateQR() {
+        const text = document.getElementById('qrText').value.trim();
+        if (!text) {
+            alert('Введите текст для QR-кода');
+            return;
+        }
+        
+        // Показываем индикатор загрузки
+        document.getElementById('qrLoading').style.display = 'block';
+        document.getElementById('qrPreview').style.display = 'none';
+        document.getElementById('qrPlaceholder').style.display = 'none';
+        
+        const size = document.getElementById('qrSize').value;
+        const errorCorrection = document.getElementById('qrErrorCorrection').value;
+        const color = document.getElementById('qrColor').value.substring(1);
+        const bgColor = document.getElementById('qrBgColor').value.substring(1);
+        
+        // Используем API QR Server (более надежный)
+        const url = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}&ecc=${errorCorrection}&color=${color}&bgcolor=${bgColor}`;
+        
+        // Загружаем изображение
+        const img = document.getElementById('qrPreview');
+        img.onload = function() {
+            document.getElementById('qrLoading').style.display = 'none';
+            img.style.display = 'block';
+            
+            document.getElementById('qrDataInfo').innerHTML = `
+                <div class="alert alert-info">
+                    <p class="mb-1"><strong>Данные:</strong> <code>${text.substring(0, 50)}${text.length > 50 ? '...' : ''}</code></p>
+                    <p class="mb-1"><strong>Размер:</strong> ${size}x${size}</p>
+                    <p class="mb-0"><strong>Формат:</strong> PNG</p>
+                </div>
+            `;
+            
+            generatedQRData = {
+                text: text,
+                url: url,
+                size: size
+            };
+            
+            document.getElementById('saveQRBtn').disabled = false;
+            document.getElementById('sendQRBtn').disabled = false;
+        };
+        
+        img.onerror = function() {
+            document.getElementById('qrLoading').style.display = 'none';
+            document.getElementById('qrPlaceholder').style.display = 'flex';
+            document.getElementById('qrDataInfo').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle"></i> Ошибка генерации QR-кода
+                </div>
+            `;
+        };
+        
+        img.src = url;
+    }
+    
+    function saveQR() {
+        if (!generatedQRData) return;
+        
+        const img = document.getElementById('qrPreview');
+        if (!img.src) return;
+        
+        // Создаем временную ссылку для скачивания
+        const link = document.createElement('a');
+        link.href = img.src;
+        link.download = `qr_${new Date().getTime()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showNotification('success', 'QR-код сохранен');
+    }
+    
+    function sendQRToTelegram() {
+        if (!generatedQRData) return;
+        
+        const chatId = document.getElementById('telegramChatId').value;
+        const caption = document.getElementById('telegramCaption').value;
+        const statusDiv = document.getElementById('telegramStatus');
+        
+        // Показываем статус
+        statusDiv.style.display = 'block';
+        statusDiv.className = 'alert alert-info';
+        statusDiv.innerHTML = '<i class="bi bi-hourglass"></i> Отправка...';
+        
+        // Получаем изображение как base64
+        const img = document.getElementById('qrPreview');
+        
+        // Создаем canvas для конвертации изображения в base64
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        
+        // Получаем base64 (без префикса)
+        const base64data = canvas.toDataURL('image/png').split(',')[1];
+        
+        fetch('/api/send_telegram_photo', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                photo: base64data,
+                caption: caption,
+                chat_id: chatId || undefined
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                statusDiv.className = 'alert alert-success';
+                statusDiv.innerHTML = '<i class="bi bi-check-circle"></i> QR-код отправлен в Telegram!';
+                setTimeout(() => statusDiv.style.display = 'none', 3000);
+            } else {
+                statusDiv.className = 'alert alert-danger';
+                statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Ошибка: ${data.error || 'Неизвестная ошибка'}`;
+            }
+        })
+        .catch(error => {
+            statusDiv.className = 'alert alert-danger';
+            statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Ошибка: ${error.message}`;
+        });
+    }
+    
+    // ========== ОТЛАДКА ==========
+    
+    function clearDebug() {
+        if (confirm('Очистить все отладочные снимки?')) {
+            fetch('/api/debug/clear', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    showNotification('success', `Очищено ${data.count} файлов`);
+                });
+        }
+    }
+    
+    function viewDebugLog() {
+        fetch('/api/qr/debug')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const logContent = data.debug.join('').replace(/\\n/g, '<br>');
+                    document.getElementById('debugLogContent').innerHTML = logContent || 'Лог пуст';
+                    new bootstrap.Modal(document.getElementById('debugLogModal')).show();
+                }
+            });
+    }
+    
+    function clearDebugLog() {
+        fetch('/api/debug/clear', {method: 'POST'})
+            .then(() => {
+                document.getElementById('debugLogContent').innerHTML = 'Лог очищен';
+                showNotification('success', 'Лог очищен');
+            });
+    }
+    
+    // Уведомления
+    function showNotification(type, message) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed top-0 end-0 m-3`;
+        alertDiv.style.zIndex = '9999';
+        alertDiv.style.minWidth = '300px';
+        alertDiv.style.maxWidth = '500px';
+        alertDiv.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(alertDiv);
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 3000);
+    }
+    
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+        loadHistory();
+    });
+</script>
+{% endblock %}

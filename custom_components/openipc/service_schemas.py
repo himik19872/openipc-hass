@@ -202,3 +202,43 @@ START_QR_SCAN_SCHEMA = vol.Schema({
     vol.Optional('expected_code', default='a4625vol'): cv.string,
     vol.Optional('timeout', default=300): vol.Coerce(int),
 })
+
+# OSD schemas
+OSD_SET_TEXT_SCHEMA = vol.Schema({
+    vol.Required(CONF_ENTITY_ID): cv.entity_id,
+    vol.Optional("region", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=3)),
+    vol.Required("text"): cv.string,
+    vol.Optional("font", default="UbuntuMono-Regular"): cv.string,
+    vol.Optional("size", default=32.0): vol.All(vol.Coerce(float), vol.Range(min=8, max=72)),
+    vol.Optional("color", default="#ffffff"): cv.string,
+    vol.Optional("outline", default="#0"): cv.string,
+    vol.Optional("thickness", default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
+    vol.Optional("opacity", default=255): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+    vol.Optional("posx"): vol.Coerce(int),
+    vol.Optional("posy"): vol.Coerce(int),
+    vol.Optional("save", default=True): cv.boolean,
+})
+
+OSD_CLEAR_SCHEMA = vol.Schema({
+    vol.Required(CONF_ENTITY_ID): cv.entity_id,
+    vol.Optional("region", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=3)),
+    vol.Optional("save", default=True): cv.boolean,
+})
+
+OSD_SET_TIME_FORMAT_SCHEMA = vol.Schema({
+    vol.Required(CONF_ENTITY_ID): cv.entity_id,
+    vol.Optional("format", default="%d.%m.%Y %H:%M:%S"): cv.string,
+})
+
+OSD_UPLOAD_IMAGE_SCHEMA = vol.Schema({
+    vol.Required(CONF_ENTITY_ID): cv.entity_id,
+    vol.Optional("region", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=3)),
+    vol.Required("image_path"): cv.string,
+    vol.Optional("opacity", default=255): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+    vol.Optional("posx"): vol.Coerce(int),
+    vol.Optional("posy"): vol.Coerce(int),
+})
+
+OSD_GET_CONFIG_SCHEMA = vol.Schema({
+    vol.Required(CONF_ENTITY_ID): cv.entity_id,
+})

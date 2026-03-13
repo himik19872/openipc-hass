@@ -1,6 +1,8 @@
 """Recording functions for OpenIPC cameras."""
 import asyncio
 import logging
+from datetime import datetime
+from pathlib import Path
 
 from .const import RECORD_START, RECORD_STOP, RECORD_STATUS, RECORD_MANUAL
 
@@ -100,28 +102,55 @@ async def record_to_ha_media(coordinator, duration: int, method: str = "snapshot
     """Record video directly to Home Assistant media folder."""
     _LOGGER.info("Starting HA media recording for %d seconds using %s", duration, method)
     
-    if method == "rtsp":
-        result = await coordinator.recorder.record_rtsp_stream(duration, "main", False)
-    else:
-        result = await coordinator.recorder.record_video(duration)
+    # Создаем имя файла
+    camera_name = coordinator.recorder.camera_name if hasattr(coordinator, 'recorder') else "camera"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{camera_name}_{timestamp}_{duration}s.mp4"
     
-    if result.get("success"):
+    # Полный путь для сохранения
+    if hasattr(coordinator, 'recorder') and coordinator.recorder:
+        await coordinator.recorder.ensure_folder_exists()
+        folder = coordinator.recorder.record_folder
+        full_path = folder / filename
+    else:
+        full_path = Path(f"/config/media/openipc_recordings/{camera_name}/{filename}")
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Записываем видео через встроенный сервис HA
         await coordinator.hass.services.async_call(
-            "persistent_notification",
-            "create",
+            "camera",
+            "record",
             {
-                "title": f"📹 Запись с камеры {coordinator.recorder.camera_name}",
-                "message": f"✅ Видео сохранено:\n"
-                          f"📁 {result['filename']}\n"
-                          f"⏱ Длительность: {duration} сек\n"
-                          f"📊 Размер: {result['size'] / 1024:.1f} KB\n"
-                          f"📍 {result['url']}",
-                "notification_id": f"openipc_recording_{coordinator.entry.entry_id}"
+                "entity_id": f"camera.{camera_name}",
+                "filename": str(full_path),
+                "duration": duration
             },
             blocking=True
         )
-    
-    return result
+        
+        # Ждем окончания записи
+        await asyncio.sleep(duration + 5)
+        
+        if full_path.exists():
+            file_size = full_path.stat().st_size
+            _LOGGER.info(f"✅ Recording saved: {full_path} ({file_size} bytes)")
+            
+            return {
+                "success": True,
+                "filename": str(filename),
+                "filepath": str(full_path),
+                "size": file_size,
+                "duration": duration,
+                "url": f"/local/openipc_recordings/{camera_name}/{filename}"
+            }
+        else:
+            _LOGGER.error(f"❌ File not created: {full_path}")
+            return {"success": False, "error": "File not created"}
+            
+    except Exception as err:
+        _LOGGER.error(f"❌ Failed to record: {err}")
+        return {"success": False, "error": str(err)}
 
 async def start_timed_recording(coordinator, duration: int, save_to_ha: bool = True, method: str = "snapshots"):
     """Start recording for specified duration."""
@@ -169,39 +198,83 @@ async def start_timed_recording(coordinator, duration: int, save_to_ha: bool = T
 
 async def record_and_send_telegram(coordinator, duration: int, method: str = "snapshots",
                                   caption: str = None, chat_id: str = None) -> dict:
-    """Record video and send to Telegram."""
-    _LOGGER.info("Recording and sending to Telegram for %d seconds", duration)
+    """Record video and send to Telegram using camera.record service."""
+    _LOGGER.info("📹 Recording and sending to Telegram for %d seconds", duration)
     
-    result = await coordinator.recorder.record_and_send_to_telegram(
-        duration, method, caption, chat_id
-    )
-    
-    if result.get("success") and result.get("telegram_sent"):
+    try:
+        # Создаем имя файла
+        camera_name = coordinator.recorder.camera_name if hasattr(coordinator, 'recorder') else "camera"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{camera_name}_{timestamp}_{duration}s.mp4"
+        
+        # Полный путь для сохранения
+        if hasattr(coordinator, 'recorder') and coordinator.recorder:
+            await coordinator.recorder.ensure_folder_exists()
+            folder = coordinator.recorder.record_folder
+            full_path = folder / filename
+        else:
+            full_path = Path(f"/config/media/openipc_recordings/{camera_name}/{filename}")
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        _LOGGER.info(f"📁 Saving to: {full_path}")
+        
+        # Записываем видео через встроенный сервис HA
         await coordinator.hass.services.async_call(
-            "persistent_notification",
-            "create",
+            "camera",
+            "record",
             {
-                "title": f"📹 Запись с камеры {coordinator.recorder.camera_name}",
-                "message": f"✅ Видео сохранено и отправлено в Telegram!\n"
-                          f"📁 {result['filename']}\n"
-                          f"⏱ Длительность: {duration} сек\n"
-                          f"📊 Размер: {result['size'] / 1024:.1f} KB",
-                "notification_id": f"openipc_telegram_{coordinator.entry.entry_id}"
+                "entity_id": f"camera.{camera_name}",
+                "filename": str(full_path),
+                "duration": duration
             },
             blocking=True
         )
-    elif result.get("success"):
-        await coordinator.hass.services.async_call(
-            "persistent_notification",
-            "create",
-            {
-                "title": f"📹 Запись с камеры {coordinator.recorder.camera_name}",
-                "message": f"✅ Видео сохранено, но НЕ отправлено в Telegram.\n"
-                          f"📁 {result['filename']}\n"
-                          f"⏱ Длительность: {duration} сек",
-                "notification_id": f"openipc_telegram_{coordinator.entry.entry_id}"
-            },
-            blocking=True
-        )
-    
-    return result
+        
+        # Ждем окончания записи
+        await asyncio.sleep(duration + 5)
+        
+        # Проверяем, создался ли файл
+        if not full_path.exists():
+            _LOGGER.error(f"❌ File not created: {full_path}")
+            return {"success": False, "error": "File not created"}
+        
+        file_size = full_path.stat().st_size
+        _LOGGER.info(f"✅ File created: {full_path} ({file_size} bytes)")
+        
+        # Отправляем в Telegram
+        telegram_sent = False
+        if hasattr(coordinator, 'recorder') and coordinator.recorder:
+            telegram_sent = await coordinator.recorder.send_to_telegram(
+                full_path, 
+                caption, 
+                chat_id
+            )
+        
+        # Показываем уведомление
+        if telegram_sent:
+            await coordinator.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": f"📹 Видео отправлено в Telegram",
+                    "message": f"✅ Запись завершена и отправлена\n"
+                              f"📁 {filename}\n"
+                              f"⏱ Длительность: {duration} сек\n"
+                              f"📊 Размер: {file_size / 1024:.1f} KB",
+                    "notification_id": f"openipc_telegram_{coordinator.entry.entry_id}"
+                },
+                blocking=True
+            )
+        
+        return {
+            "success": True,
+            "telegram_sent": telegram_sent,
+            "filename": str(filename),
+            "filepath": str(full_path),
+            "size": file_size,
+            "duration": duration
+        }
+        
+    except Exception as err:
+        _LOGGER.error(f"❌ Error in record_and_send_telegram: {err}")
+        return {"success": False, "error": str(err)}

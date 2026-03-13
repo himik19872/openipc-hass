@@ -10,6 +10,7 @@ from homeassistant.helpers import device_registry as dr
 from .const import DOMAIN
 from .coordinator import OpenIPCDataUpdateCoordinator
 from .services import async_register_services
+from .api_ha import async_register_api
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +57,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register services (они будут зарегистрированы только один раз)
     await async_register_services(hass)
     
+    # Register API endpoints for addon
+    await async_register_api(hass)
+    _LOGGER.info("✅ OpenIPC API endpoints registered")
+    
     # Set up all platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
@@ -92,3 +97,54 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         device_registry.async_clear_config_entry(entry.entry_id)
     except Exception as err:
         _LOGGER.debug("Error removing device registry entry: %s", err)
+
+
+# ==================== Функции для API ====================
+
+async def async_get_cameras(hass: HomeAssistant) -> list:
+    """Получить список всех камер OpenIPC."""
+    cameras = []
+    
+    for entry_id, coordinator in hass.data[DOMAIN].items():
+        if entry_id == "config":
+            continue
+        
+        if hasattr(coordinator, 'host'):
+            # Получаем модель из данных
+            model = "Unknown"
+            firmware = "Unknown"
+            if coordinator.data and 'parsed' in coordinator.data:
+                model = coordinator.data['parsed'].get('model', 'Unknown')
+                firmware = coordinator.data['parsed'].get('firmware', 'Unknown')
+            
+            camera_data = {
+                "entry_id": entry_id,
+                "name": coordinator.entry.data.get('name', 'OpenIPC Camera'),
+                "ip": coordinator.host,
+                "port": coordinator.port,
+                "username": coordinator.username,
+                "password": coordinator.password,
+                "device_type": coordinator.entry.data.get('device_type', 'openipc'),
+                "rtsp_port": coordinator.rtsp_port,
+                "available": coordinator.data.get('available', False) if coordinator.data else False,
+                "model": model,
+                "firmware": firmware,
+            }
+            
+            # Добавляем информацию о Beward если есть
+            if hasattr(coordinator, 'beward') and coordinator.beward:
+                camera_data['beward'] = {
+                    'relay_count': getattr(coordinator.beward, 'relay_count', 1),
+                    'model': getattr(coordinator.beward, '_model', 'DS07P-LP')
+                }
+            
+            # Добавляем информацию о Vivotek если есть
+            if hasattr(coordinator, 'vivotek') and coordinator.vivotek:
+                camera_data['vivotek'] = {
+                    'ptz_available': getattr(coordinator.vivotek, 'ptz_available', False),
+                    'model': getattr(coordinator.vivotek, 'model_name', 'SD9364-EHL')
+                }
+            
+            cameras.append(camera_data)
+    
+    return cameras
